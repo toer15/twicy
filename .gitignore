@@ -1,0 +1,4 @@
+node_modules/
+worlds/
+*.log
+.DS_Store

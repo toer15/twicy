@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Twicycraft</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='6' fill='%2355a437'/><rect y='6' width='16' height='10' fill='%23835d40'/></svg>">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- in-game HUD -->
+<div id="hud" class="hidden">
+  <div id="crosshair">+</div>
+  <div id="flash"></div>
+  <div id="water-overlay" class="hidden"></div>
+  <div id="debug" class="hidden"></div>
+  <div id="tablist" class="hidden"></div>
+  <div id="chat-log"></div>
+  <div id="chat-input-wrap" class="hidden"><input id="chat-input" maxlength="200" autocomplete="off"></div>
+  <div id="hud-bottom">
+    <div id="item-name"></div>
+    <div id="hearts"></div>
+    <div id="air"></div>
+    <div id="hotbar"></div>
+  </div>
+</div>
+
+<!-- inventory -->
+<div id="inv-screen" class="overlay hidden"></div>
+<div id="inv-cursor" class="hidden"></div>
+
+<!-- click to capture mouse -->
+<div id="lock-overlay" class="overlay hidden">
+  <div class="panel narrow center">
+    <h2>Click to play</h2>
+    <p class="muted">Your mouse will be captured. Press Esc to release it.</p>
+  </div>
+</div>
+
+<!-- pause -->
+<div id="pause" class="overlay hidden">
+  <div class="panel narrow center">
+    <h2>Game Paused</h2>
+    <button class="btn big" id="pause-resume">Back to Game</button>
+    <div class="options">
+      <label>Render distance <span id="opt-dist-val"></span>
+        <input type="range" id="opt-dist" min="3" max="10" step="1"></label>
+      <label>Field of view <span id="opt-fov-val"></span>
+        <input type="range" id="opt-fov" min="50" max="110" step="1"></label>
+      <label>Mouse sensitivity <span id="opt-sens-val"></span>
+        <input type="range" id="opt-sens" min="0.2" max="3" step="0.1"></label>
+      <label class="check"><input type="checkbox" id="opt-bob"> View bobbing</label>
+      <label class="check"><input type="checkbox" id="opt-sound"> Sound</label>
+    </div>
+    <button class="btn" id="pause-quit">Save &amp; Quit to Title</button>
+  </div>
+</div>
+
+<!-- death screen -->
+<div id="death" class="overlay death hidden">
+  <div class="panel narrow center">
+    <h2>You died!</h2>
+    <p class="muted">Your items are safe. Better luck next time.</p>
+    <button class="btn big" id="death-respawn">Respawn</button>
+    <button class="btn" id="death-quit">Title Screen</button>
+  </div>
+</div>
+
+<!-- menus -->
+<div id="menu"></div>
+<div id="toast"></div>
+<div id="loading" class="overlay hidden">
+  <div class="panel narrow center">
+    <div class="loading-text">Loading…</div>
+    <div class="loading-bar"><div></div></div>
+  </div>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/math.js"></script>
+<script src="js/noise.js"></script>
+<script src="js/textures.js"></script>
+<script src="js/blocks.js"></script>
+<script src="js/skins.js"></script>
+<script src="js/worldgen.js"></script>
+<script src="js/world.js"></script>
+<script src="js/mesher.js"></script>
+<script src="js/renderer.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/sound.js"></script>
+<script src="js/net.js"></script>
+<script src="js/inventory.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/player.js"></script>
+<script src="js/menu.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
