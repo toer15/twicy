@@ -453,7 +453,9 @@ const handlers = {
     const w = sess.world;
     if (!w || w.simId !== sess.id || !Array.isArray(m.list)) return;
     if (m.list.length > 64) return;
-    broadcast(w, { t: 'mobs', list: m.list }, sess.id);
+    const out = { t: 'mobs', list: m.list };
+    if (Array.isArray(m.arrows) && m.arrows.length <= 24) out.arrows = m.arrows;
+    broadcast(w, out, sess.id);
   },
 
   mobhit(sess, m) {

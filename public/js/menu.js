@@ -419,8 +419,9 @@ class Menu {
         <h2>How to Play</h2>
         <div class="panel narrow">
           <table class="help-table">${rows.map(r => `<tr><td><kbd>${r[0]}</kbd></td><td>${r[1]}</td></tr>`).join('')}</table>
-          <p class="muted">Survival tip: punch a tree for logs ➜ craft planks ➜ a crafting table ➜
-          tools (axe chops faster, stone blocks need a pickaxe to drop anything).</p>
+          <p class="muted">Survival: punch trees ➜ planks ➜ crafting table ➜ stone tools ➜ furnace
+          (8 cobble) ➜ smelt iron ore with coal ➜ iron tools &amp; armor ➜ mine diamonds at night… if
+          the zombies, skeletons and creepers let you.</p>
           <p class="muted">Commands: /gamemode creative|survival, /time day|night, /help</p>
           <button class="btn" id="m-back">Back</button>
         </div>

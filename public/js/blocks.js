@@ -9,7 +9,7 @@ const BL = {
   WOOL_WHITE: 21, WOOL_RED: 22, WOOL_GREEN: 23, WOOL_BLUE: 24,
   WOOL_YELLOW: 25, WOOL_BLACK: 26,
   FLOWER_RED: 27, FLOWER_YELLOW: 28, TALLGRASS: 29,
-  GLOWSTONE: 30, BOOKSHELF: 31, PUMPKIN: 32, CRAFTING_TABLE: 33,
+  GLOWSTONE: 30, BOOKSHELF: 31, PUMPKIN: 32, CRAFTING_TABLE: 33, FURNACE: 34,
 };
 
 // def: name, tiles {top,bottom,side} or {all}, solid (collision), opaque (culls
@@ -43,10 +43,10 @@ defBlock(BL.BRICK, { name: 'Bricks', tiles: { all: TILE.BRICK }, hardness: 2.5, 
 defBlock(BL.SNOW, { name: 'Snowy Grass', tiles: { top: TILE.SNOW_TOP, bottom: TILE.DIRT, side: TILE.SNOW_SIDE }, hardness: 0.9, drop: BL.DIRT, material: 'earth' });
 defBlock(BL.WATER, { name: 'Water', tiles: { all: TILE.WATER }, solid: false, opaque: false, fluid: true, hardness: -1 });
 defBlock(BL.CACTUS, { name: 'Cactus', tiles: { top: TILE.CACTUS_TOP, bottom: TILE.CACTUS_TOP, side: TILE.CACTUS_SIDE }, opaque: false, hardness: 0.6, material: 'plant' });
-defBlock(BL.COAL_ORE, { name: 'Coal Ore', tiles: { all: TILE.COAL_ORE }, hardness: 3.0, material: 'stone' });
+defBlock(BL.COAL_ORE, { name: 'Coal Ore', tiles: { all: TILE.COAL_ORE }, hardness: 3.0, drop: 114 /* IT.COAL */, material: 'stone' });
 defBlock(BL.IRON_ORE, { name: 'Iron Ore', tiles: { all: TILE.IRON_ORE }, hardness: 3.5, material: 'stone' });
 defBlock(BL.GOLD_ORE, { name: 'Gold Ore', tiles: { all: TILE.GOLD_ORE }, hardness: 3.5, material: 'stone' });
-defBlock(BL.DIAMOND_ORE, { name: 'Diamond Ore', tiles: { all: TILE.DIAMOND_ORE }, hardness: 4.0, material: 'stone' });
+defBlock(BL.DIAMOND_ORE, { name: 'Diamond Ore', tiles: { all: TILE.DIAMOND_ORE }, hardness: 4.0, drop: 117 /* IT.DIAMOND */, material: 'stone' });
 defBlock(BL.GRAVEL, { name: 'Gravel', tiles: { all: TILE.GRAVEL }, hardness: 0.8, material: 'earth' });
 defBlock(BL.WOOL_WHITE, { name: 'White Wool', tiles: { all: TILE.WOOL_WHITE }, hardness: 1.0 });
 defBlock(BL.WOOL_RED, { name: 'Red Wool', tiles: { all: TILE.WOOL_RED }, hardness: 1.0 });
@@ -60,6 +60,7 @@ defBlock(BL.TALLGRASS, { name: 'Tall Grass', tiles: { all: TILE.TALLGRASS }, sol
 defBlock(BL.GLOWSTONE, { name: 'Glowstone', tiles: { all: TILE.GLOWSTONE }, hardness: 0.6 });
 defBlock(BL.BOOKSHELF, { name: 'Bookshelf', tiles: { top: TILE.PLANKS, bottom: TILE.PLANKS, side: TILE.BOOKSHELF }, hardness: 1.8, material: 'wood' });
 defBlock(BL.CRAFTING_TABLE, { name: 'Crafting Table', tiles: { top: TILE.CRAFT_TOP, bottom: TILE.PLANKS, side: TILE.CRAFT_SIDE }, hardness: 1.8, material: 'wood' });
+defBlock(BL.FURNACE, { name: 'Furnace', tiles: { top: TILE.FURNACE_TOP, bottom: TILE.FURNACE_TOP, side: TILE.FURNACE_SIDE, front: TILE.FURNACE_FRONT }, hardness: 2.8, material: 'stone' });
 defBlock(BL.PUMPKIN, { name: 'Pumpkin', tiles: { top: TILE.PUMPKIN_TOP, bottom: TILE.PUMPKIN_TOP, side: TILE.PUMPKIN_SIDE }, hardness: 1.2, material: 'plant' });
 
 // face: 0:+X 1:-X 2:+Y(top) 3:-Y(bottom) 4:+Z 5:-Z
@@ -68,6 +69,7 @@ function blockTile(id, face) {
   if (t.all !== undefined) return t.all;
   if (face === 2) return t.top;
   if (face === 3) return t.bottom;
+  if (face === 5 && t.front !== undefined) return t.front;
   return t.side;
 }
 

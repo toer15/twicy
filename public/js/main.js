@@ -119,7 +119,7 @@ function setupNetHandlers() {
   n.on('leave', m => App.game && App.game.onPlayerLeave(m));
   n.on('chat', m => App.game && HUD.addChat(m.from, m.text, !!m.sys));
   n.on('sim', m => App.game && App.game.setSim(!!m.you));
-  n.on('mobs', m => App.game && App.game.mobs.onBatch(m.list || []));
+  n.on('mobs', m => App.game && App.game.mobs.onBatch(m.list || [], m.arrows));
   n.on('mobhit', m => App.game && App.game.mobs.applyHit(m.id, m.dmg, m.kx, m.kz, m.by));
   n.on('mobatk', m => App.game && App.game.hurtPlayer(m.dmg, [m.kx, 4.5, m.kz]));
   n.on('mobdrop', m => App.game && App.game.drops.spawn(m.id, m.x, m.y, m.z));
@@ -356,6 +356,7 @@ class Game {
     });
     this.invUI.setCreative(this.player.mode === 'creative');
 
+    this.furnaces = new Map(); // "x,y,z" -> {in, fuel, out, burn, burnMax, progress}
     this.input = { f: 0, b: 0, l: 0, r: 0, jump: 0, down: 0, sprint: 0, sneak: 0 };
     this.mouse = { left: false, right: false };
     this.breaking = null;     // {x,y,z,progress,hardness}
@@ -775,7 +776,8 @@ class Game {
     if (p) {
       this.updatePausePanel();
       document.exitPointerLock();
-      this.input = { f: 0, b: 0, l: 0, r: 0, jump: 0, down: 0, sprint: 0, sneak: 0 };
+      this.furnaces = new Map(); // "x,y,z" -> {in, fuel, out, burn, burnMax, progress}
+    this.input = { f: 0, b: 0, l: 0, r: 0, jump: 0, down: 0, sprint: 0, sneak: 0 };
       this.mouse.left = this.mouse.right = false;
       this.breaking = null;
       this.sendPData();
@@ -878,6 +880,16 @@ class Game {
     App.net.send({ t: 'set', x, y, z, id: BL.AIR });
     Sfx.breakBlock();
     if (particlesLevel() > 0) this.particles.burst(x, y, z, id, Math.round(16 * particlesLevel()));
+    // furnaces spill their contents when broken
+    const fkey = x + ',' + y + ',' + z;
+    if (id === BL.FURNACE && this.furnaces.has(fkey)) {
+      const f = this.furnaces.get(fkey);
+      for (const st of [f.in, f.fuel, f.out]) {
+        if (st) for (let i = 0; i < st.count; i++) this.drops.spawn(st.id, x + 0.5, y + 0.5, z + 0.5);
+      }
+      this.furnaces.delete(fkey);
+      if (this.invUI.openState && this.invUI.furnace === f) this.invUI.close();
+    }
     if (this.player.mode === 'survival') {
       // tool rules decide the drop (e.g. stone needs a pickaxe)
       const info = breakInfo(id, this.heldItemId());
@@ -936,11 +948,18 @@ class Game {
     if (this.player.dead || this.paused) return;
     const t = this.rayTarget();
     if (!t) return;
-    // right-clicking a crafting table opens the 3x3 grid (unless sneaking)
-    if (this.world.getBlock(t.x, t.y, t.z) === BL.CRAFTING_TABLE && !this.player.sneaking) {
+    // right-clicking a crafting table / furnace opens its UI (unless sneaking)
+    const targetId = this.world.getBlock(t.x, t.y, t.z);
+    if (targetId === BL.CRAFTING_TABLE && !this.player.sneaking) {
       this.mouse.right = false;
       document.exitPointerLock();
       this.invUI.open('table');
+      return;
+    }
+    if (targetId === BL.FURNACE && !this.player.sneaking) {
+      this.mouse.right = false;
+      document.exitPointerLock();
+      this.invUI.open('furnace', this.getFurnace(t.x, t.y, t.z));
       return;
     }
     const sel = this.inv.getSelected();
@@ -1007,6 +1026,56 @@ class Game {
   startSwing() {
     this.swingAnim = 0;
     this.swingFlag = true;
+  }
+
+  // ---------- furnaces (client-side block state, per session) ----------
+
+  getFurnace(x, y, z) {
+    const key = x + ',' + y + ',' + z;
+    let f = this.furnaces.get(key);
+    if (!f) {
+      f = { in: null, fuel: null, out: null, burn: 0, burnMax: 0, progress: 0 };
+      this.furnaces.set(key, f);
+    }
+    return f;
+  }
+
+  tickFurnaces(dt) {
+    for (const [key, f] of this.furnaces) {
+      let changed = false;
+      const smelt = f.in ? smeltResult(f.in.id) : null;
+      const outFree = smelt && (!f.out || (f.out.id === smelt.id && f.out.count + smelt.n <= stackMax(smelt.id)));
+      // ignite new fuel when there is something to smelt
+      if (smelt && outFree && f.burn <= 0 && f.fuel && fuelTime(f.fuel.id) > 0) {
+        f.burn = f.burnMax = fuelTime(f.fuel.id);
+        f.fuel.count--;
+        if (f.fuel.count <= 0) f.fuel = null;
+        changed = true;
+      }
+      if (f.burn > 0) {
+        f.burn -= dt;
+        if (smelt && outFree) {
+          f.progress += dt;
+          if (f.progress >= SMELT_TIME) {
+            f.progress = 0;
+            f.in.count--;
+            if (f.in.count <= 0) f.in = null;
+            if (f.out) f.out.count += smelt.n;
+            else f.out = { id: smelt.id, count: smelt.n };
+            changed = true;
+            Sfx.pop();
+          }
+        } else {
+          f.progress = Math.max(0, f.progress - dt * 2);
+        }
+      } else {
+        f.progress = Math.max(0, f.progress - dt * 2);
+      }
+      if (changed && this.invUI.openState && this.invUI.kind === 'furnace' && this.invUI.furnace === f) {
+        this.invUI._refresh();
+      }
+    }
+    if (this.invUI.openState && this.invUI.kind === 'furnace') this.invUI.updateFurnaceBars();
   }
 
   // ---------- chunk pipeline ----------
@@ -1231,6 +1300,7 @@ class Game {
       if (this.swingAnim >= 1) this.swingAnim = -1;
     }
     this.remotes.tick(dt, this.time);
+    this.tickFurnaces(dt);
     const envNow = this.env();
     this.mobs.tick(dt, envNow.dayLight);
     this.rainLevel = this.weather.tick(dt, this.time, this.world,
@@ -1283,6 +1353,7 @@ class Game {
     // players & mobs
     this.remotes.draw(r, App.playerMeshes, getSkinTexture, this.time);
     this.mobs.draw(r, App.playerMeshes, App.mobMeshes, getMobTexture, getSkinTexture, this.time);
+    if (this.mobs.arrows.length) this.mobs.drawArrows(r, App.mobMeshes.arrow, getMobTexture('spider'));
     if (this.thirdPerson && !this.player.dead) {
       const p = this.player;
       const hSpeed = Math.hypot(p.vel[0], p.vel[2]);

@@ -21,6 +21,11 @@ const TILE = {
   ITEM_SHOVEL_WOOD: 59, ITEM_SHOVEL_STONE: 60,
   ITEM_SWORD_WOOD: 61, ITEM_SWORD_STONE: 62, ITEM_LEATHER: 63,
   ITEM_HELMET: 64, ITEM_CHEST: 65, ITEM_LEGS: 66, ITEM_BOOTS: 67,
+  FURNACE_FRONT: 68, FURNACE_SIDE: 69, FURNACE_TOP: 70,
+  ITEM_COAL: 71, ITEM_IRON: 72, ITEM_GOLD: 73, ITEM_DIAMOND: 74,
+  ITEM_PICK_IRON: 75, ITEM_AXE_IRON: 76, ITEM_SHOVEL_IRON: 77, ITEM_SWORD_IRON: 78,
+  ITEM_PICK_DIAMOND: 79, ITEM_SWORD_DIAMOND: 80,
+  ITEM_HELMET_I: 81, ITEM_CHEST_I: 82, ITEM_LEGS_I: 83, ITEM_BOOTS_I: 84,
 };
 
 const ATLAS_TILES = 16;        // tiles per row
@@ -343,6 +348,73 @@ function buildAtlas() {
   armorBase(TILE.ITEM_CHEST, [[3,2,4],[3,11,13],[4,2,5],[4,10,13],[5,2,13],[6,3,12],[7,3,12],[8,3,12],[9,3,12],[10,3,12],[11,3,12]]);
   armorBase(TILE.ITEM_LEGS, [[3,3,12],[4,3,12],[5,3,12],[6,3,6],[6,9,12],[7,3,6],[7,9,12],[8,3,6],[8,9,12],[9,3,6],[9,9,12],[10,3,6],[10,9,12],[11,3,6],[11,9,12]]);
   armorBase(TILE.ITEM_BOOTS, [[6,2,6],[6,9,13],[7,2,6],[7,9,13],[8,2,7],[8,9,14],[9,2,7],[9,9,14]]);
+
+  // --- furnace ---
+  speckle(TILE.FURNACE_SIDE, ['#7a7a7a', '#8d8d8d', '#676767']);
+  {
+    const tx = (TILE.FURNACE_SIDE % 16) * 16, ty = Math.floor(TILE.FURNACE_SIDE / 16) * 16;
+    ctx.fillStyle = '#4f4f4f';
+    ctx.fillRect(tx, ty, 16, 1); ctx.fillRect(tx, ty + 15, 16, 1);
+  }
+  speckle(TILE.FURNACE_TOP, ['#8d8d8d', '#7a7a7a', '#999']);
+  speckle(TILE.FURNACE_FRONT, ['#7a7a7a', '#8d8d8d', '#676767']);
+  {
+    const tx = (TILE.FURNACE_FRONT % 16) * 16, ty = Math.floor(TILE.FURNACE_FRONT / 16) * 16;
+    ctx.fillStyle = '#222';
+    ctx.fillRect(tx + 4, ty + 8, 8, 6); // mouth
+    ctx.fillStyle = '#3a3a3a';
+    ctx.fillRect(tx + 3, ty + 7, 10, 1);
+    ctx.fillStyle = '#ff8a2a'; // embers
+    ctx.fillRect(tx + 6, ty + 12, 1, 2); ctx.fillRect(tx + 8, ty + 11, 1, 3); ctx.fillRect(tx + 10, ty + 12, 1, 2);
+    ctx.fillStyle = '#ffc14d';
+    ctx.fillRect(tx + 7, ty + 12, 1, 2); ctx.fillRect(tx + 9, ty + 12, 1, 2);
+  }
+
+  // --- ingots / gems ---
+  function ingot(tile, c1, c2, c3) {
+    clearTile(tile);
+    const rows = [[6, 3, 11], [7, 2, 12], [8, 2, 12], [9, 3, 13], [10, 4, 13]];
+    for (const [y, xa, xb] of rows)
+      for (let x = xa; x <= xb; x++) px(tile, x, y, (x + y) % 3 ? c1 : c2);
+    for (let x = 3; x <= 11; x++) px(tile, x, 6, c3);
+    px(tile, 2, 7, c3); px(tile, 12, 9, c2);
+  }
+  clearTile(TILE.ITEM_COAL);
+  for (const [x, y, w, h] of [[4, 4, 8, 8], [3, 6, 2, 4], [11, 5, 2, 5], [5, 3, 5, 2], [5, 11, 6, 2]]) {
+    for (let yy = y; yy < y + h; yy++)
+      for (let xx = x; xx < x + w; xx++) px(TILE.ITEM_COAL, xx, yy, (xx + yy) % 3 ? '#2e2e2e' : '#1c1c1c');
+  }
+  px(TILE.ITEM_COAL, 6, 5, '#4a4a4a'); px(TILE.ITEM_COAL, 9, 8, '#4a4a4a');
+  ingot(TILE.ITEM_IRON, '#d8d8d8', '#b8b8b8', '#f0f0f0');
+  ingot(TILE.ITEM_GOLD, '#f5d62a', '#d8b822', '#fff0a0');
+  clearTile(TILE.ITEM_DIAMOND);
+  {
+    const t = TILE.ITEM_DIAMOND;
+    const rows = [[4, 5, 10], [5, 4, 11], [6, 4, 11], [7, 5, 10], [8, 6, 9], [9, 7, 8], [10, 7, 8]];
+    for (const [y, xa, xb] of rows)
+      for (let x = xa; x <= xb; x++) px(t, x, y, (x * 2 + y) % 3 ? '#62e6dc' : '#aef4ee');
+    px(t, 5, 5, '#ffffff'); px(t, 6, 4, '#ffffff');
+    for (const [y, xa, xb] of rows) { px(t, xa, y, '#2da89e'); px(t, xb, y, '#2da89e'); }
+  }
+
+  // --- iron & diamond tools, iron armor ---
+  drawTool(TILE.ITEM_PICK_IRON, 'pickaxe', '#d8d8d8', '#9a9a9a');
+  drawTool(TILE.ITEM_AXE_IRON, 'axe', '#d8d8d8', '#9a9a9a');
+  drawTool(TILE.ITEM_SHOVEL_IRON, 'shovel', '#d8d8d8', '#9a9a9a');
+  drawSword(TILE.ITEM_SWORD_IRON, '#e8e8e8', '#a8a8a8');
+  drawTool(TILE.ITEM_PICK_DIAMOND, 'pickaxe', '#62e6dc', '#2da89e');
+  drawSword(TILE.ITEM_SWORD_DIAMOND, '#7deee5', '#3dc4ba');
+  const IR = '#d8d8d8', IRD = '#9a9a9a', IRL = '#f0f0f0';
+  function armorIron(t, rows) {
+    clearTile(t);
+    for (const [y, xa, xb] of rows)
+      for (let x = xa; x <= xb; x++) px(t, x, y, (x + y) % 3 ? IR : IRL);
+    for (const [y, xa, xb] of rows) { px(t, xa, y, IRD); px(t, xb, y, IRD); }
+  }
+  armorIron(TILE.ITEM_HELMET_I, [[4,3,12],[5,2,13],[6,2,13],[7,2,4],[7,11,13],[8,2,4],[8,11,13]]);
+  armorIron(TILE.ITEM_CHEST_I, [[3,2,4],[3,11,13],[4,2,5],[4,10,13],[5,2,13],[6,3,12],[7,3,12],[8,3,12],[9,3,12],[10,3,12],[11,3,12]]);
+  armorIron(TILE.ITEM_LEGS_I, [[3,3,12],[4,3,12],[5,3,12],[6,3,6],[6,9,12],[7,3,6],[7,9,12],[8,3,6],[8,9,12],[9,3,6],[9,9,12],[10,3,6],[10,9,12],[11,3,6],[11,9,12]]);
+  armorIron(TILE.ITEM_BOOTS_I, [[6,2,6],[6,9,13],[7,2,6],[7,9,13],[8,2,7],[8,9,14],[9,2,7],[9,9,14]]);
 
   // --- sun & moon ---
   fill(TILE.SUN, '#fdf2b0');

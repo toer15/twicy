@@ -34,7 +34,13 @@ const SKINS = [
   { id: 'shadow', name: 'Shadow', skin: '#9088a8', hair: '#241f33', eyes: '#e03a5f', shirt: '#2c2640', pants: '#1c1830', shoes: '#15121f', sleeves: 'shirt' },
 ];
 
-function getSkin(id) { return SKINS.find(s => s.id === id) || SKINS[0]; }
+// humanoid mob palettes — usable by buildSkinCanvas but not player-selectable
+const EXTRA_SKINS = {
+  skeleton: { id: 'skeleton', name: 'Skeleton', skin: '#e8e8e0', hair: '#d8d8d0', eyes: '#1c1c1c',
+    shirt: '#cfcfc6', pants: '#bdbdb4', shoes: '#a8a89e', sleeves: 'skin' },
+};
+
+function getSkin(id) { return SKINS.find(s => s.id === id) || EXTRA_SKINS[id] || SKINS[0]; }
 
 function shade(hex, f) {
   const n = parseInt(hex.slice(1), 16);

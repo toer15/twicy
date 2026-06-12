@@ -127,9 +127,10 @@ class InventoryUI {
 
   setCreative(creative) { this.creative = creative; }
 
-  open(kind = 'player') {
+  open(kind = 'player', furnace = null) {
     this.openState = true;
     this.kind = kind;
+    this.furnace = furnace;
     this.craftSize = kind === 'table' ? 3 : 2;
     // the mouse must be free while a UI is open
     if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
@@ -171,7 +172,8 @@ class InventoryUI {
     const panel = document.createElement('div');
     panel.className = 'panel inv-panel';
     const showPalette = this.creative && this.kind === 'player';
-    const title = this.kind === 'table' ? 'Crafting Table'
+    const title = this.kind === 'furnace' ? 'Furnace'
+      : this.kind === 'table' ? 'Crafting Table'
       : showPalette ? 'Creative Inventory' : 'Inventory & Crafting';
     panel.innerHTML = `<h3>${title}</h3>`;
 
@@ -186,6 +188,28 @@ class InventoryUI {
       sep.className = 'inv-sep';
       sep.textContent = 'Hotbar & storage';
       panel.appendChild(sep);
+    } else if (this.kind === 'furnace') {
+      const f = this.furnace;
+      const area = document.createElement('div');
+      area.className = 'furnace-area';
+      const colIn = document.createElement('div');
+      colIn.className = 'furnace-col';
+      const inSlot = this._slotEl(f.in, e => this._furnaceClick('in', e), f.in ? thingName(f.in.id) : 'Smelt input');
+      const fire = document.createElement('div');
+      fire.className = 'furnace-fire';
+      fire.innerHTML = '<div id="furn-burn"></div><span>🔥</span>';
+      const fuelSlot = this._slotEl(f.fuel, e => this._furnaceClick('fuel', e), f.fuel ? thingName(f.fuel.id) : 'Fuel (coal, wood…)');
+      colIn.appendChild(inSlot); colIn.appendChild(fire); colIn.appendChild(fuelSlot);
+      area.appendChild(colIn);
+      const prog = document.createElement('div');
+      prog.className = 'furnace-prog';
+      prog.innerHTML = '<div id="furn-prog"></div><span>➜</span>';
+      area.appendChild(prog);
+      const outSlot = this._slotEl(f.out, e => this._furnaceClick('out', e), f.out ? thingName(f.out.id) : 'Output');
+      outSlot.classList.add('craft-result');
+      area.appendChild(outSlot);
+      panel.appendChild(area);
+      this.updateFurnaceBars();
     } else {
       if (this.kind === 'player') {
         // character pane: skin preview + armor slots
@@ -251,7 +275,9 @@ class InventoryUI {
 
     const hint = document.createElement('div');
     hint.className = 'inv-hint';
-    hint.textContent = showPalette
+    hint.textContent = this.kind === 'furnace'
+      ? 'Top: ore/sand/cobble to smelt • bottom: fuel (coal burns longest) • smelting continues while you play'
+      : showPalette
       ? 'Click palette: grab a stack • click with item on palette: discard • right-click: place one'
       : this.kind === 'table'
         ? '3x3 crafting — try tools: planks/cobble on top, sticks below • shift-click result: craft all'
@@ -414,6 +440,51 @@ class InventoryUI {
     }
     Sfx.pop();
     this._refresh();
+  }
+
+  // furnace slots: input/fuel behave like normal slots, output is take-only
+  _furnaceClick(which, e) {
+    const f = this.furnace;
+    if (!f) return;
+    Sfx.click();
+    if (which === 'out') {
+      if (!f.out) return;
+      const cap = stackMax(f.out.id);
+      if (!this.cursor) { this.cursor = f.out; f.out = null; }
+      else if (this.cursor.id === f.out.id && this.cursor.count + f.out.count <= cap) {
+        this.cursor.count += f.out.count;
+        f.out = null;
+      }
+      this._refresh();
+      return;
+    }
+    const cur = f[which];
+    if (e.button === 2 && this.cursor) {
+      const cap = stackMax(this.cursor.id);
+      if (!cur) { f[which] = { id: this.cursor.id, count: 1 }; this.cursor.count--; }
+      else if (cur.id === this.cursor.id && cur.count < cap) { cur.count++; this.cursor.count--; }
+      if (this.cursor.count <= 0) this.cursor = null;
+    } else {
+      if (!this.cursor && cur) { this.cursor = cur; f[which] = null; }
+      else if (this.cursor && !cur) { f[which] = this.cursor; this.cursor = null; }
+      else if (this.cursor && cur) {
+        if (cur.id === this.cursor.id) {
+          const add = Math.min(this.cursor.count, stackMax(cur.id) - cur.count);
+          cur.count += add; this.cursor.count -= add;
+          if (this.cursor.count <= 0) this.cursor = null;
+        } else { f[which] = this.cursor; this.cursor = cur; }
+      }
+    }
+    this._refresh();
+  }
+
+  updateFurnaceBars() {
+    const f = this.furnace;
+    if (!f) return;
+    const burn = document.getElementById('furn-burn');
+    const prog = document.getElementById('furn-prog');
+    if (burn) burn.style.height = (f.burnMax > 0 ? clamp(f.burn / f.burnMax, 0, 1) * 100 : 0) + '%';
+    if (prog) prog.style.width = clamp(f.progress / SMELT_TIME, 0, 1) * 100 + '%';
   }
 
   _refresh() {

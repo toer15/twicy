@@ -6,7 +6,7 @@ const WORLD_H = 96;        // world height in blocks
 const SEA = 30;            // sea level (highest Y that water fills)
 const DAY_LENGTH = 600;    // seconds per full day/night cycle
 
-const GAME_VERSION = '1.0.0';
+const GAME_VERSION = '1.2.0';
 const GAME_NAME = 'Twicycraft';
 
 // Player dimensions (Minecraft-like)

@@ -229,6 +229,8 @@ run(`
     dirtShovel: breakInfo(BL.DIRT, IT.SHOVEL_STONE),
     diamondWoodPick: breakInfo(BL.DIAMOND_ORE, IT.PICK_WOOD),
     diamondStonePick: breakInfo(BL.DIAMOND_ORE, IT.PICK_STONE),
+    diamondIronPick: breakInfo(BL.DIAMOND_ORE, IT.PICK_IRON),
+    coalDrop: breakInfo(BL.COAL_ORE, IT.PICK_WOOD),
     bedrock: breakInfo(BL.BEDROCK, IT.PICK_STONE),
   };
 `);
@@ -240,10 +242,48 @@ assert.ok(tools.stonePick.seconds < 1, 'pickaxe mines stone fast');
 assert.ok(tools.logAxe.seconds < tools.logHand.seconds / 2.5, 'axe chops much faster');
 assert.strictEqual(tools.logHand.drop, run('BL.LOG'), 'punching a tree still drops the log');
 assert.ok(tools.dirtShovel.seconds < 0.2, 'shovel digs dirt fast');
-assert.strictEqual(tools.diamondWoodPick.drop, 0, 'diamond ore needs a stone pickaxe');
-assert.strictEqual(tools.diamondStonePick.drop, run('BL.DIAMOND_ORE'), 'stone pickaxe mines diamond');
+assert.strictEqual(tools.diamondWoodPick.drop, 0, 'diamond ore drops nothing with a wooden pick');
+assert.strictEqual(tools.diamondStonePick.drop, 0, 'diamond ore needs better than stone (like Minecraft)');
+assert.strictEqual(tools.diamondIronPick.drop, run('IT.DIAMOND'), 'iron pickaxe mines diamonds');
+assert.strictEqual(tools.coalDrop.drop, run('IT.COAL'), 'coal ore drops coal items');
 assert.strictEqual(tools.bedrock.seconds, null, 'bedrock unbreakable (Infinity serializes to null)');
 console.log('✓ tool mechanics: pickaxe requirement, axe/shovel speed, ore tiers');
+
+// ---- smelting & the iron/diamond tier ----
+run(`
+  const gF = new Array(9).fill(0);
+  gF[0]=C; gF[1]=C; gF[2]=C; gF[3]=C; gF[5]=C; gF[6]=C; gF[7]=C; gF[8]=C; // furnace ring
+  const rFurn = matchRecipe(gF, 3);
+  const gI = new Array(9).fill(0);
+  gI[0]=IT.IRON_INGOT; gI[1]=IT.IRON_INGOT; gI[2]=IT.IRON_INGOT; gI[4]=IT.STICK; gI[7]=IT.STICK;
+  const rIronPick = matchRecipe(gI, 3);
+  const gD = new Array(9).fill(0);
+  gD[1]=IT.DIAMOND; gD[4]=IT.DIAMOND; gD[7]=IT.STICK;
+  const rDiaSword = matchRecipe(gD, 3);
+  globalThis._smelt = {
+    rFurn, rIronPick, rDiaSword,
+    iron: smeltResult(BL.IRON_ORE), glassFromSand: smeltResult(BL.SAND),
+    charcoal: smeltResult(BL.LOG), nothing: smeltResult(BL.DIRT),
+    coalFuel: fuelTime(IT.COAL), plankFuel: fuelTime(BL.PLANKS), stoneFuel: fuelTime(BL.STONE),
+    ironPts: (() => { const i = new Inventory();
+      i.armor = [{id:IT.HELMET_IRON,count:1},{id:IT.CHEST_IRON,count:1},{id:IT.LEGS_IRON,count:1},{id:IT.BOOTS_IRON,count:1}];
+      return i.armorPoints(); })(),
+    diaDmg: attackDamage(IT.SWORD_DIAMOND),
+  };
+`);
+const sm = JSON.parse(run('JSON.stringify(_smelt)'));
+assert.deepStrictEqual(sm.rFurn, { id: run('BL.FURNACE'), count: 1 }, '8 cobble -> furnace');
+assert.deepStrictEqual(sm.rIronPick, { id: run('IT.PICK_IRON'), count: 1 }, 'iron pickaxe recipe');
+assert.deepStrictEqual(sm.rDiaSword, { id: run('IT.SWORD_DIAMOND'), count: 1 }, 'diamond sword recipe');
+assert.deepStrictEqual(sm.iron, { id: run('IT.IRON_INGOT'), n: 1 }, 'iron ore smelts to ingot');
+assert.deepStrictEqual(sm.glassFromSand, { id: run('BL.GLASS'), n: 1 }, 'sand smelts to glass');
+assert.deepStrictEqual(sm.charcoal, { id: run('IT.COAL'), n: 1 }, 'logs smelt to charcoal');
+assert.strictEqual(sm.nothing, null, 'dirt does not smelt');
+assert.ok(sm.coalFuel > sm.plankFuel, 'coal burns longer than planks');
+assert.strictEqual(sm.stoneFuel, 0, 'stone is not fuel');
+assert.strictEqual(sm.ironPts, 15, 'full iron armor = 15 points');
+assert.strictEqual(sm.diaDmg, 7, 'diamond sword does 7 damage');
+console.log('✓ furnace recipe, smelting table, fuels, iron/diamond tier');
 
 // ---- item drops: physics + magnet pickup ----
 run(`
@@ -380,6 +420,33 @@ assert.ok(mob.cowDead, 'cow died from the hit');
 assert.ok(mob.drops.length >= 1, 'cow dropped leather: ' + JSON.stringify(mob.drops));
 assert.ok(mob.reload, 'mob serialize/load roundtrip');
 console.log(`✓ mobs: chase (${mob.d0.toFixed(0)}m → ${mob.d1.toFixed(0)}m), attack (${mob.hurt} dmg), death drops`);
+
+// ---- skeleton: kites and shoots arrows ----
+run(`
+  let hurtR = 0;
+  const fakeGame2 = {
+    world: aw,
+    player: { dead: false, pos: [2.5, 21, 2.5] },
+    remotes: { map: new Map() },
+    netSend() {}, hurtPlayer(d) { hurtR += d; },
+    applyExplosion() {}, spawnMobDrop() {},
+  };
+  const mobs3 = new Mobs(fakeGame2);
+  mobs3.setSim(true);
+  mobs3.spawn('skeleton', 10.5, 21, 10.5);
+  let shots = 0;
+  for (let i = 0; i < 900; i++) {
+    const before = mobs3.arrows.length;
+    mobs3.tick(1 / 60, 0.1);
+    if (mobs3.arrows.length > before) shots++;
+  }
+  globalThis._skel = { shots, hurtR };
+`);
+const skel = JSON.parse(run('JSON.stringify(_skel)'));
+assert.ok(skel.shots >= 2, 'skeleton fired arrows: ' + skel.shots);
+assert.ok(skel.hurtR >= 3, 'arrows hit the player: ' + skel.hurtR + ' dmg');
+console.log(`✓ skeleton: fired ${skel.shots} arrows, dealt ${skel.hurtR} dmg`);
+
 
 // ---- block registry consistency ----
 run(`

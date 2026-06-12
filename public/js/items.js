@@ -11,6 +11,10 @@ const IT = {
   SWORD_WOOD: 107, SWORD_STONE: 108,
   LEATHER: 109,
   HELMET: 110, CHESTPLATE: 111, LEGGINGS: 112, BOOTS: 113,
+  COAL: 114, IRON_INGOT: 115, GOLD_INGOT: 116, DIAMOND: 117,
+  PICK_IRON: 118, AXE_IRON: 119, SHOVEL_IRON: 120, SWORD_IRON: 121,
+  PICK_DIAMOND: 122, SWORD_DIAMOND: 123,
+  HELMET_IRON: 124, CHEST_IRON: 125, LEGS_IRON: 126, BOOTS_IRON: 127,
 };
 
 const ITEMS = {};
@@ -33,6 +37,20 @@ defItem(IT.HELMET, { name: 'Leather Cap', tile: TILE.ITEM_HELMET, armorSlot: 0, 
 defItem(IT.CHESTPLATE, { name: 'Leather Tunic', tile: TILE.ITEM_CHEST, armorSlot: 1, armor: 3, stack: 1 });
 defItem(IT.LEGGINGS, { name: 'Leather Pants', tile: TILE.ITEM_LEGS, armorSlot: 2, armor: 2, stack: 1 });
 defItem(IT.BOOTS, { name: 'Leather Boots', tile: TILE.ITEM_BOOTS, armorSlot: 3, armor: 1, stack: 1 });
+defItem(IT.COAL, { name: 'Coal', tile: TILE.ITEM_COAL });
+defItem(IT.IRON_INGOT, { name: 'Iron Ingot', tile: TILE.ITEM_IRON });
+defItem(IT.GOLD_INGOT, { name: 'Gold Ingot', tile: TILE.ITEM_GOLD });
+defItem(IT.DIAMOND, { name: 'Diamond', tile: TILE.ITEM_DIAMOND });
+defItem(IT.PICK_IRON, { name: 'Iron Pickaxe', tile: TILE.ITEM_PICK_IRON, tool: 'pickaxe', tier: 3, speed: 7, stack: 1 });
+defItem(IT.AXE_IRON, { name: 'Iron Axe', tile: TILE.ITEM_AXE_IRON, tool: 'axe', tier: 3, speed: 7, stack: 1 });
+defItem(IT.SHOVEL_IRON, { name: 'Iron Shovel', tile: TILE.ITEM_SHOVEL_IRON, tool: 'shovel', tier: 3, speed: 7, stack: 1 });
+defItem(IT.SWORD_IRON, { name: 'Iron Sword', tile: TILE.ITEM_SWORD_IRON, tool: 'sword', tier: 3, dmg: 6, stack: 1 });
+defItem(IT.PICK_DIAMOND, { name: 'Diamond Pickaxe', tile: TILE.ITEM_PICK_DIAMOND, tool: 'pickaxe', tier: 4, speed: 9, stack: 1 });
+defItem(IT.SWORD_DIAMOND, { name: 'Diamond Sword', tile: TILE.ITEM_SWORD_DIAMOND, tool: 'sword', tier: 4, dmg: 7, stack: 1 });
+defItem(IT.HELMET_IRON, { name: 'Iron Helmet', tile: TILE.ITEM_HELMET_I, armorSlot: 0, armor: 2, stack: 1 });
+defItem(IT.CHEST_IRON, { name: 'Iron Chestplate', tile: TILE.ITEM_CHEST_I, armorSlot: 1, armor: 6, stack: 1 });
+defItem(IT.LEGS_IRON, { name: 'Iron Leggings', tile: TILE.ITEM_LEGS_I, armorSlot: 2, armor: 5, stack: 1 });
+defItem(IT.BOOTS_IRON, { name: 'Iron Boots', tile: TILE.ITEM_BOOTS_I, armorSlot: 3, armor: 2, stack: 1 });
 
 // melee damage (half-hearts) for whatever is in hand
 function attackDamage(heldId) {
@@ -57,7 +75,19 @@ const CREATIVE_ALL = CREATIVE_ITEMS.concat(Object.keys(ITEMS).map(Number));
 // shaped patterns are row arrays of ids (0 = empty); matched against the
 // trimmed crafting grid, including the horizontally mirrored variant.
 const P = BL.PLANKS, S = IT.STICK, C = BL.COBBLE, L = IT.LEATHER;
+const FE = IT.IRON_INGOT, DI = IT.DIAMOND;
 const RECIPES = [
+  { pattern: [[C, C, C], [C, 0, C], [C, C, C]], out: BL.FURNACE, n: 1 },
+  { pattern: [[FE, FE, FE], [0, S, 0], [0, S, 0]], out: IT.PICK_IRON, n: 1 },
+  { pattern: [[FE, FE], [FE, S], [0, S]], out: IT.AXE_IRON, n: 1 },
+  { pattern: [[FE], [S], [S]], out: IT.SHOVEL_IRON, n: 1 },
+  { pattern: [[FE], [FE], [S]], out: IT.SWORD_IRON, n: 1 },
+  { pattern: [[DI, DI, DI], [0, S, 0], [0, S, 0]], out: IT.PICK_DIAMOND, n: 1 },
+  { pattern: [[DI], [DI], [S]], out: IT.SWORD_DIAMOND, n: 1 },
+  { pattern: [[FE, FE, FE], [FE, 0, FE]], out: IT.HELMET_IRON, n: 1 },
+  { pattern: [[FE, 0, FE], [FE, FE, FE], [FE, FE, FE]], out: IT.CHEST_IRON, n: 1 },
+  { pattern: [[FE, FE, FE], [FE, 0, FE], [FE, 0, FE]], out: IT.LEGS_IRON, n: 1 },
+  { pattern: [[FE, 0, FE], [FE, 0, FE]], out: IT.BOOTS_IRON, n: 1 },
   { pattern: [[P], [P], [S]], out: IT.SWORD_WOOD, n: 1 },
   { pattern: [[C], [C], [S]], out: IT.SWORD_STONE, n: 1 },
   { pattern: [[L, L, L], [L, 0, L]], out: IT.HELMET, n: 1 },
@@ -118,6 +148,27 @@ function matchRecipe(grid, size) {
   return null;
 }
 
+// ---------------- smelting (furnace) ----------------
+const SMELT_TIME = 5; // seconds per item
+const SMELT_RECIPES = {
+  [BL.IRON_ORE]: { id: IT.IRON_INGOT, n: 1 },
+  [BL.GOLD_ORE]: { id: IT.GOLD_INGOT, n: 1 },
+  [BL.SAND]: { id: BL.GLASS, n: 1 },
+  [BL.COBBLE]: { id: BL.STONE, n: 1 },
+  [BL.LOG]: { id: IT.COAL, n: 1 }, // charcoal
+};
+// burn seconds per fuel item (coal smelts 8, planks 1.5, etc.)
+const FUEL_TIME = {
+  [IT.COAL]: 40,
+  [BL.LOG]: 7.5,
+  [BL.PLANKS]: 7.5,
+  [BL.CRAFTING_TABLE]: 7.5,
+  [BL.BOOKSHELF]: 7.5,
+  [IT.STICK]: 2.5,
+};
+function smeltResult(id) { return SMELT_RECIPES[id] || null; }
+function fuelTime(id) { return FUEL_TIME[id] || 0; }
+
 // ---------------- breaking mechanics ----------------
 // Minecraft rules: axes speed up wood, shovels speed up earth; stone-class
 // blocks REQUIRE a pickaxe to drop anything and break 3.3x slower without
@@ -135,8 +186,8 @@ function breakInfo(blockId, heldId) {
       return { seconds: seconds * 3.3, drop: 0 };
     }
     seconds /= item.speed;
-    const needsTier2 = blockId === BL.IRON_ORE || blockId === BL.GOLD_ORE || blockId === BL.DIAMOND_ORE;
-    if (needsTier2 && item.tier < 2) drop = 0;
+    if (blockId === BL.IRON_ORE && item.tier < 2) drop = 0;            // stone pick for iron
+    if ((blockId === BL.GOLD_ORE || blockId === BL.DIAMOND_ORE) && item.tier < 3) drop = 0; // iron pick for gold/diamond
   } else if (mat === 'wood' && item && item.tool === 'axe') {
     seconds /= item.speed;
   } else if (mat === 'earth' && item && item.tool === 'shovel') {

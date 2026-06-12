@@ -3,7 +3,7 @@
 // by the server) runs the AI and broadcasts state; everyone else interpolates.
 'use strict';
 
-const MOB_KINDS = ['zombie', 'spider', 'creeper', 'pig', 'sheep', 'cow'];
+const MOB_KINDS = ['zombie', 'spider', 'creeper', 'pig', 'sheep', 'cow', 'skeleton'];
 
 const MOB_TYPES = {
   zombie: { hostile: true, night: true, hp: 20, speed: 2.6, dmg: 3, aggroR: 14, atkR: 1.5,
@@ -15,6 +15,9 @@ const MOB_TYPES = {
   pig: { hp: 10, speed: 1.7, w: 0.9, h: 0.9, model: 'quad', drops: [] },
   sheep: { hp: 8, speed: 1.6, w: 0.9, h: 1.1, model: 'quad', drops: [{ id: BL.WOOL_WHITE, ch: 1, n: 1 }] },
   cow: { hp: 10, speed: 1.5, w: 0.95, h: 1.3, model: 'quad', drops: [{ id: 109, ch: 1, n: 2 }] },
+  skeleton: { hostile: true, night: true, hp: 16, speed: 2.4, dmg: 0, aggroR: 15, atkR: 0,
+    ranged: { range: 12, keep: 7, cooldown: 2.2, dmg: 3 },
+    w: 0.6, h: 1.9, model: 'humanoid', skin: 'skeleton', drops: [{ id: 100 /*stick*/, ch: 0.6, n: 2 }] },
 };
 
 // ---- procedural mob textures: 32x16, left half = body, right half = face ----
@@ -96,6 +99,7 @@ function buildMobMeshes(renderer) {
     creeperBody: makeMobBox(renderer, 8, 12, 5, false),
     creeperHead: makeMobBox(renderer, 8, 8, 8, true),
     creeperLeg: makeMobBox(renderer, 4, 6, 5, false),
+    arrow: makeMobBox(renderer, 1.2, 1.2, 9, false),
   };
 }
 
@@ -158,6 +162,7 @@ class Mobs {
   constructor(game) {
     this.game = game;
     this.list = new Map();
+    this.arrows = [];   // {pos:[..], vel:[..], age}
     this.nextId = 1;
     this.isSim = false;
     this.enabled = true;
@@ -232,6 +237,7 @@ class Mobs {
       if (this.isSim) this._ai(m, dt, dayLight);
       else this._interp(m, dt);
     }
+    this._tickArrows(dt);
     if (this.isSim) {
       this._spawning(dt, dayLight);
       this.sendTimer += dt;
@@ -239,6 +245,47 @@ class Mobs {
       this.saveTimer += dt;
       if (this.saveTimer > 10) { this.saveTimer = 0; this.game.netSend({ t: 'mobsave', list: this.serialize() }); }
     }
+  }
+
+  _tickArrows(dt) {
+    const w = this.game.world;
+    for (let i = this.arrows.length - 1; i >= 0; i--) {
+      const a = this.arrows[i];
+      a.age += dt;
+      a.vel[1] -= 8 * dt; // gentle arc
+      a.pos[0] += a.vel[0] * dt;
+      a.pos[1] += a.vel[1] * dt;
+      a.pos[2] += a.vel[2] * dt;
+      if (a.age > 4 || w.solidAt(Math.floor(a.pos[0]), Math.floor(a.pos[1]), Math.floor(a.pos[2]))) {
+        this.arrows.splice(i, 1);
+        continue;
+      }
+      if (!this.isSim) continue;
+      // hit a player?
+      for (const p of this._players()) {
+        if (Math.abs(a.pos[0] - p.pos[0]) < 0.45 && Math.abs(a.pos[2] - p.pos[2]) < 0.45 &&
+            a.pos[1] > p.pos[1] && a.pos[1] < p.pos[1] + 1.9) {
+          const dl = Math.hypot(a.vel[0], a.vel[2]) || 1;
+          if (p.self) this.game.hurtPlayer(a.dmg, [a.vel[0] / dl * 5, 4, a.vel[2] / dl * 5]);
+          else this.game.netSend({ t: 'mobatk', target: p.id, dmg: a.dmg, kx: a.vel[0] / dl * 5, kz: a.vel[2] / dl * 5 });
+          this.arrows.splice(i, 1);
+          break;
+        }
+      }
+    }
+  }
+
+  _shoot(m, target, spec) {
+    const sx = m.pos[0], sy = m.pos[1] + 1.4, sz = m.pos[2];
+    const dx = target.pos[0] - sx, dy = (target.pos[1] + 1) - sy, dz = target.pos[2] - sz;
+    const dl = Math.hypot(dx, dy, dz) || 1;
+    const sp = 16;
+    this.arrows.push({
+      pos: [sx + dx / dl * 0.6, sy, sz + dz / dl * 0.6],
+      vel: [dx / dl * sp, dy / dl * sp + dl * 0.28, dz / dl * sp], // lead the arc
+      dmg: spec.dmg, age: 0,
+    });
+    Sfx.click();
   }
 
   // ---------- remote interpolation ----------
@@ -252,8 +299,11 @@ class Mobs {
     if (m.fuseT > 0) m.fuseT += dt;
   }
 
-  onBatch(list) {
+  onBatch(list, arrows) {
     if (this.isSim) return;
+    if (Array.isArray(arrows)) {
+      this.arrows = arrows.map(a => ({ pos: [a[0], a[1], a[2]], vel: [a[3], a[4], a[5]], age: 0, dmg: 0 }));
+    }
     const seen = new Set();
     for (const v of list) {
       const [id, kindIdx, x, y, z, yaw, hp, flags] = v;
@@ -293,7 +343,11 @@ class Mobs {
         Math.round(m.pos[0] * 50) / 50, Math.round(m.pos[1] * 50) / 50, Math.round(m.pos[2] * 50) / 50,
         Math.round(m.yaw * 100) / 100, m.hp, flags]);
     }
-    this.game.netSend({ t: 'mobs', list: out });
+    const arrows = this.arrows.slice(0, 24).map(a => [
+      Math.round(a.pos[0] * 20) / 20, Math.round(a.pos[1] * 20) / 20, Math.round(a.pos[2] * 20) / 20,
+      Math.round(a.vel[0] * 10) / 10, Math.round(a.vel[1] * 10) / 10, Math.round(a.vel[2] * 10) / 10,
+    ]);
+    this.game.netSend({ t: 'mobs', list: out, arrows });
   }
 
   // ---------- AI (sim host only) ----------
@@ -325,7 +379,16 @@ class Mobs {
       const dx = nearest.pos[0] - m.pos[0], dz = nearest.pos[2] - m.pos[2];
       const dl = Math.hypot(dx, dz) || 1;
       m.headPitch = clamp(Math.atan2(nearest.pos[1] - m.pos[1], dl) * 0.6, -0.5, 0.5);
-      if (t.fuse) {
+      if (t.ranged) {
+        // skeleton: keep distance and shoot
+        m.atkCd -= dt;
+        if (nd < t.ranged.keep - 1.5) moveDir = [-dx / dl, -dz / dl];      // back away
+        else if (nd > t.ranged.range) moveDir = [dx / dl, dz / dl];        // close in
+        if (nd <= t.ranged.range && m.atkCd <= 0) {
+          m.atkCd = t.ranged.cooldown;
+          this._shoot(m, nearest, t.ranged);
+        }
+      } else if (t.fuse) {
         // creeper: get close then start the fuse
         if (nd < t.atkR) {
           if (m.fuseT === 0) Sfx.fuse();
@@ -498,7 +561,7 @@ class Mobs {
     const inCave = gy < surfaceH - 5;
     if ((dayLight < 0.42 || inCave) && hostiles < 10) {
       const r = Math.random();
-      const kind = r < 0.45 ? 'zombie' : r < 0.75 ? 'spider' : 'creeper';
+      const kind = r < 0.35 ? 'zombie' : r < 0.6 ? 'skeleton' : r < 0.82 ? 'spider' : 'creeper';
       this.spawn(kind, x, gy + 1, z);
     } else if (dayLight > 0.55 && !inCave && passives < 8 && ground === BL.GRASS) {
       const r = Math.random();
@@ -524,7 +587,7 @@ class Mobs {
           walkPhase: m.walkPhase, walkAmp: m.walkAmp, swing: -1, time,
           zombieArms: true, deathT: m.deathT,
         });
-        const tex = getSkinTex('zombie');
+        const tex = getSkinTex(t.skin || 'zombie');
         for (const name in parts) renderer.drawBox(playerMeshes[name], parts[name], tex, { tint });
       } else {
         const tex = getMobTex(m.type);
@@ -532,6 +595,18 @@ class Mobs {
           renderer.drawBox(mobMeshes[meshName], mat, tex, { tint });
         }
       }
+    }
+  }
+
+  drawArrows(renderer, arrowMesh, tex) {
+    for (const a of this.arrows) {
+      const yaw = Math.atan2(-a.vel[0], -a.vel[2]);
+      const pitch = Math.atan2(a.vel[1], Math.hypot(a.vel[0], a.vel[2]));
+      let mat = M4.translate(a.pos[0], a.pos[1], a.pos[2]);
+      mat = M4.mul(mat, M4.rotY(yaw));
+      mat = M4.mul(mat, M4.rotX(-pitch));
+      mat = M4.mul(mat, M4.translate(-0.035, -0.035, -0.25));
+      renderer.drawBox(arrowMesh, mat, tex);
     }
   }
 
