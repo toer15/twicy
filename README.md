@@ -42,15 +42,23 @@ WebSocket implementation.
 
 ## Play it
 
-**▶ Play in your browser (no install): https://toer15.github.io/twicy/**
+Three ways, easiest first:
 
-That static version runs in *offline mode*: full singleplayer with worlds
-saved in your browser (localStorage). Deployed automatically by the GitHub
-Pages workflow in `.github/workflows/pages.yml`.
+**1. Zero install — open it from disk.** Download this repo
+([ZIP](https://github.com/toer15/twicy/archive/refs/heads/claude/great-dijkstra-2z6lcu.zip)),
+extract it, and open `public/index.html` in your browser. Done — the game
+detects there's no server and runs in offline mode: full singleplayer with
+worlds saved in your browser.
 
-### Run the full version (with multiplayer)
+**2. In your browser via GitHub Pages: https://toer15.github.io/twicy/**
+— same offline singleplayer, no download. One-time setup by the repo owner:
+*Settings → Pages → Source: GitHub Actions*; after that the workflow in
+`.github/workflows/pages.yml` tests and deploys every push automatically
+(the deploy step fails with "Resource not accessible by integration" until
+that toggle is set, because workflow tokens may not create the Pages site).
 
-Requires Node.js ≥ 18. No `npm install` needed.
+**3. The full version (with multiplayer)** — requires Node.js ≥ 18, no
+`npm install` needed:
 
 ```bash
 npm start          # or: node server/server.js
