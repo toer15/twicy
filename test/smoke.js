@@ -27,7 +27,7 @@ const ctx = vm.createContext({
 });
 
 // only logic files — no DOM/WebGL needed for these
-for (const f of ['config.js', 'math.js', 'noise.js', 'textures.js', 'blocks.js', 'items.js', 'worldgen.js', 'world.js', 'mesher.js', 'inventory.js', 'sound.js', 'player.js', 'entities.js', 'particles.js', 'localserver.js']) {
+for (const f of ['config.js', 'math.js', 'noise.js', 'textures.js', 'blocks.js', 'items.js', 'weather.js', 'worldgen.js', 'world.js', 'mesher.js', 'inventory.js', 'sound.js', 'player.js', 'entities.js', 'mobs.js', 'particles.js', 'localserver.js']) {
   const src = fs.readFileSync(path.join(PUB, f), 'utf8');
   vm.runInContext(src, ctx, { filename: f });
 }
@@ -276,6 +276,110 @@ assert.strictEqual(stk.max, 1, 'tools do not stack');
 assert.strictEqual(stk.a.count, 1, 'each tool occupies its own slot');
 assert.strictEqual(stk.c.count, 1, 'third tool in third slot');
 console.log('✓ per-item stack limits (tools = 1)');
+
+// ---- new recipes: swords + armor ----
+run(`
+  const g3 = new Array(9).fill(0);
+  g3[1] = BL.PLANKS; g3[4] = BL.PLANKS; g3[7] = IT.STICK; // sword column
+  const sw = matchRecipe(g3, 3);
+  const gA = new Array(9).fill(0);
+  gA[0]=IT.LEATHER; gA[1]=IT.LEATHER; gA[2]=IT.LEATHER; gA[3]=IT.LEATHER; gA[5]=IT.LEATHER; // helmet
+  const helm = matchRecipe(gA, 3);
+  globalThis._new = { sw, helm, dmgHand: attackDamage(0), dmgSword: attackDamage(IT.SWORD_STONE) };
+`);
+const nw = JSON.parse(run('JSON.stringify(_new)'));
+assert.deepStrictEqual(nw.sw, { id: run('IT.SWORD_WOOD'), count: 1 }, 'wooden sword recipe');
+assert.deepStrictEqual(nw.helm, { id: run('IT.HELMET'), count: 1 }, 'leather cap recipe');
+assert.strictEqual(nw.dmgHand, 1, 'fist does 1 damage');
+assert.strictEqual(nw.dmgSword, 5, 'stone sword does 5 damage');
+console.log('✓ sword + armor recipes, attack damage table');
+
+// ---- armor slots + protection ----
+run(`
+  const ainv = new Inventory();
+  ainv.armor[0] = { id: IT.HELMET, count: 1 };
+  ainv.armor[1] = { id: IT.CHESTPLATE, count: 1 };
+  globalThis._arm = {
+    pts: ainv.armorPoints(),
+    ser: ainv.serializeArmor(),
+    badLoad: (() => { const i2 = new Inventory(); i2.loadArmor([[IT.BOOTS, 1], 0, 0, 0]); return i2.armor[0]; })(),
+  };
+`);
+const arm = JSON.parse(run('JSON.stringify(_arm)'));
+assert.strictEqual(arm.pts, 4, 'helmet(1) + chest(3) = 4 armor points');
+assert.deepStrictEqual(arm.ser[0], [run('IT.HELMET'), 1], 'armor serializes');
+assert.strictEqual(arm.badLoad, null, 'boots cannot load into the helmet slot');
+console.log('✓ armor slots, points, serialization');
+
+// ---- weather: deterministic, bounded, varies over time ----
+run(`
+  const wA = new Weather('seedX');
+  const wB = new Weather('seedX');
+  let same = true, any = 0, bad = 0;
+  for (let t = 0; t < 4000; t += 37) {
+    const a = wA.intensity(t), b = wB.intensity(t);
+    if (a !== b) same = false;
+    if (a > 0) any++;
+    if (a < 0 || a > 1) bad++;
+  }
+  globalThis._wx = { same, any, bad };
+`);
+const wx = JSON.parse(run('JSON.stringify(_wx)'));
+assert.ok(wx.same, 'weather is deterministic per seed');
+assert.ok(wx.any > 0, 'it does rain sometimes');
+assert.strictEqual(wx.bad, 0, 'intensity stays in [0,1]');
+console.log('✓ weather cycle deterministic (rained in', wx.any, 'of 109 samples)');
+
+// ---- mobs: AI chases, attacks, takes damage, dies with drops ----
+run(`
+  // flat test arena so AI has predictable ground
+  const aw = new World('arena');
+  aw.gen.genChunk = function (cx, cz) {
+    const d = new Uint8Array(CHUNK * CHUNK * WORLD_H);
+    for (let z = 0; z < CHUNK; z++)
+      for (let x = 0; x < CHUNK; x++) {
+        d[chunkIdx(x, 0, z)] = BL.BEDROCK;
+        for (let y = 1; y <= 20; y++) d[chunkIdx(x, y, z)] = BL.STONE;
+      }
+    return d;
+  };
+  for (let cz = -1; cz <= 1; cz++) for (let cx = -1; cx <= 1; cx++) aw.ensureChunk(cx, cz);
+  let hurt = 0; const mobDrops = [];
+  const fakeGame = {
+    world: aw,
+    player: { dead: false, pos: [2.5, 21, 2.5] },
+    remotes: { map: new Map() },
+    netSend() {},
+    hurtPlayer(d) { hurt += d; },
+    applyExplosion() {},
+    spawnMobDrop(id) { mobDrops.push(id); },
+  };
+  const mobs = new Mobs(fakeGame);
+  mobs.setSim(true);
+  const z = mobs.spawn('zombie', 10.5, 21, 10.5);
+  const d0 = dist2d(z.pos[0], z.pos[2], 2.5, 2.5);
+  for (let i = 0; i < 600; i++) mobs.tick(1 / 60, 0.1); // night
+  const d1 = dist2d(z.pos[0], z.pos[2], 2.5, 2.5);
+  globalThis._mob = { d0, d1, hurt, alive: mobs.list.has(z.id) };
+  // kill a cow -> leather drops assigned to the killer
+  const cow = mobs.spawn('cow', 5.5, 21, 5.5);
+  mobs.applyHit(cow.id, 10, 0, 0, 'Tester');
+  globalThis._mob.cowDead = cow.hp <= 0 && cow.deathT > 0;
+  globalThis._mob.drops = mobDrops.slice();
+  // serialize/load roundtrip
+  const mobSer = mobs.serialize();
+  const mobs2 = new Mobs(fakeGame);
+  mobs2.load(mobSer);
+  globalThis._mob.reload = mobs2.count() === mobSer.length;
+`);
+const mob = JSON.parse(run('JSON.stringify(_mob)'));
+assert.ok(mob.d1 < mob.d0 - 3, `zombie chased the player: ${mob.d0.toFixed(1)} -> ${mob.d1.toFixed(1)}`);
+assert.ok(mob.hurt >= 3, 'zombie attacked the player: ' + mob.hurt + ' dmg');
+assert.ok(mob.alive, 'zombie still alive');
+assert.ok(mob.cowDead, 'cow died from the hit');
+assert.ok(mob.drops.length >= 1, 'cow dropped leather: ' + JSON.stringify(mob.drops));
+assert.ok(mob.reload, 'mob serialize/load roundtrip');
+console.log(`✓ mobs: chase (${mob.d0.toFixed(0)}m → ${mob.d1.toFixed(0)}m), attack (${mob.hurt} dmg), death drops`);
 
 // ---- block registry consistency ----
 run(`

@@ -238,10 +238,37 @@ kbd {
 #toast.on { transform: translateX(-50%) translateY(0); }
 #toast.error { border-color: #a85050; color: #ffb6b6; }
 
-#loading { z-index: 95; background: rgba(0,0,0,0.75); }
-.loading-bar { height: 10px; background: #111; border: 2px solid #4a4a4a; margin-top: 12px; overflow: hidden; }
-.loading-bar div { height: 100%; width: 40%; background: #69a84f; animation: load 1.1s infinite linear; }
-@keyframes load { from { margin-left: -40%; } to { margin-left: 100%; } }
+#loading { z-index: 95; }
+.mc-loading {
+  background-image: var(--dirt-bg);
+  background-size: 64px 64px;
+  image-rendering: pixelated;
+  background-color: #3a2a1a;
+}
+.mc-loading-inner { text-align: center; width: min(560px, 90vw); }
+.mc-loading-title {
+  font-size: clamp(30px, 6vw, 52px);
+  font-weight: bold;
+  letter-spacing: 4px;
+  color: #fff;
+  text-shadow: 3px 3px 0 #3f3f3f, 5px 5px 0 rgba(0,0,0,0.7);
+  margin-bottom: 26px;
+}
+.loading-text { font-size: 15px; text-shadow: 1px 1px 0 #000; margin-bottom: 12px; }
+.loading-bar {
+  height: 12px;
+  background: #111;
+  border: 2px solid #000;
+  box-shadow: 0 0 0 2px #555;
+  overflow: hidden;
+}
+#loading-fill {
+  height: 100%;
+  width: 5%;
+  background: linear-gradient(#7fd45f, #4e8a37);
+  transition: width 0.18s;
+}
+.loading-tip { margin-top: 22px; color: #ffe97d; font-size: 12px; text-shadow: 1px 1px 0 #000; }
 
 /* ---------- HUD ---------- */
 
@@ -269,7 +296,7 @@ kbd {
 }
 
 #hotbar { display: flex; }
-#hotbar .slot, .inv-grid .slot {
+#hotbar .slot, .inv-grid .slot, .craft-area .slot, .armor-col .slot {
   width: 48px; height: 48px;
   background: rgba(0,0,0,0.5);
   border: 2px solid #8b8b8b;
@@ -419,3 +446,104 @@ kbd {
 .options label { display: block; margin: 10px 0; font-size: 13px; }
 .options input[type=range] { width: 100%; }
 .options .check { display: flex; gap: 8px; align-items: center; }
+
+
+/* ---------- pause panel: host info + invites ---------- */
+
+.pause-panel { width: min(520px, 94vw); }
+.host-box {
+  text-align: left;
+  background: rgba(0,0,0,0.35);
+  border: 2px solid #3a3a3a;
+  padding: 10px 12px;
+  margin-top: 12px;
+}
+.host-box h3 { margin: 0 0 6px; font-size: 13px; color: #9fd29f; }
+.lan-list { margin-top: 6px; font-size: 12px; color: #cde; line-height: 1.6; }
+.invite-list { max-height: 140px; overflow: auto; }
+
+.friend-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid #333;
+  font-size: 13px;
+  gap: 8px;
+}
+.friend-row small { color: #999; }
+.dot {
+  display: inline-block;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: #555;
+  margin-right: 4px;
+}
+.dot.on { background: #6fdd6f; box-shadow: 0 0 5px #6fdd6f; }
+
+#invite-toast {
+  position: fixed;
+  top: 16px; right: 16px;
+  z-index: 98;
+  background: #1d2c1d;
+  border: 2px solid #69a84f;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+}
+
+/* ---------- settings ---------- */
+
+#settings-screen { z-index: 80; }
+.settings-panel { width: min(460px, 94vw); text-align: center; }
+.settings-panel h3 { text-align: left; border-bottom: 1px solid #444; padding-bottom: 4px; }
+.set-row { display: block; text-align: left; font-size: 13px; margin: 10px 0; }
+.set-row input[type=range] { width: 100%; }
+.set-toggle { display: block; width: 100%; margin: 6px 0; }
+
+/* ---------- world groups & badges ---------- */
+
+.world-group {
+  font-size: 11px;
+  color: #9fd29f;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 8px 4px 4px;
+}
+.badge.private { color: #e0b0ff; border-color: #e0b0ff; }
+.small-mode { font-size: 12px; }
+
+/* ---------- inventory character pane ---------- */
+
+.char-pane {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(0,0,0,0.35);
+  border: 2px solid #3a3a3a;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.char-preview { image-rendering: pixelated; height: 150px; }
+.armor-col { display: flex; flex-direction: column; }
+.armor-slot { position: relative; }
+.armor-slot:empty::after, .armor-slot[data-ph]:not(:has(img))::after {
+  content: attr(data-ph);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.35;
+  font-size: 20px;
+}
+.char-stats { font-size: 13px; line-height: 1.7; }
+.char-stats small { color: #9fd29f; }
+
+/* ---------- HUD armor ---------- */
+
+.armor-row { height: 16px; }
+.armor-pip { color: #cfd6dd; font-size: 13px; margin: 0 1px; text-shadow: 1px 1px 0 #000; }

@@ -21,6 +21,10 @@ const DEFAULT_SETTINGS = {
   sensitivity: 1.0,
   viewBob: true,
   sound: true,
+  soundVolume: 100,
+  clouds: true,
+  particles: 'all',  // 'all' | 'reduced' | 'off'
+  invertY: false,
 };
 
 // chunk index helpers: idx = x + z*CHUNK + y*CHUNK*CHUNK

@@ -19,6 +19,8 @@ const TILE = {
   ITEM_PICK_WOOD: 55, ITEM_PICK_STONE: 56,
   ITEM_AXE_WOOD: 57, ITEM_AXE_STONE: 58,
   ITEM_SHOVEL_WOOD: 59, ITEM_SHOVEL_STONE: 60,
+  ITEM_SWORD_WOOD: 61, ITEM_SWORD_STONE: 62, ITEM_LEATHER: 63,
+  ITEM_HELMET: 64, ITEM_CHEST: 65, ITEM_LEGS: 66, ITEM_BOOTS: 67,
 };
 
 const ATLAS_TILES = 16;        // tiles per row
@@ -300,6 +302,47 @@ function buildAtlas() {
   drawTool(TILE.ITEM_AXE_STONE, 'axe', '#9a9a9a', '#5f5f5f');
   drawTool(TILE.ITEM_SHOVEL_WOOD, 'shovel', '#b08a52', '#7c5c33');
   drawTool(TILE.ITEM_SHOVEL_STONE, 'shovel', '#9a9a9a', '#5f5f5f');
+
+  // swords: short diagonal handle + long blade with a crossguard
+  function drawSword(tile, bladeCol, bladeDark) {
+    clearTile(tile);
+    drawHandle(tile, 1, 14, 4); // grip
+    px(tile, 3, 10, '#4a3a22'); px(tile, 5, 12, '#4a3a22'); // guard
+    px(tile, 4, 10, '#4a3a22'); px(tile, 5, 11, '#4a3a22');
+    for (let i = 0; i < 9; i++) {
+      px(tile, 5 + i, 10 - i, bladeCol);
+      px(tile, 6 + i, 10 - i, bladeDark);
+      if (i < 8) px(tile, 6 + i, 9 - i, bladeCol);
+    }
+    px(tile, 14, 1, bladeCol);
+  }
+  drawSword(TILE.ITEM_SWORD_WOOD, '#b08a52', '#7c5c33');
+  drawSword(TILE.ITEM_SWORD_STONE, '#b9b9b9', '#7a7a7a');
+
+  // leather: floppy tan hide
+  clearTile(TILE.ITEM_LEATHER);
+  {
+    const t = TILE.ITEM_LEATHER;
+    for (let y = 3; y < 13; y++)
+      for (let x = 2; x < 14; x++) {
+        const edge = (x < 4 && y < 5) || (x > 11 && y > 10) || (x < 3 && y > 11);
+        if (!edge) px(t, x, y, ['#a0683c', '#8e5a32', '#b07546'][(x + y * 3) % 3]);
+      }
+    for (let x = 3; x < 13; x++) px(t, x, 3, '#6e4424');
+  }
+
+  // leather armor icons
+  const AR = '#a0683c', ARD = '#7c4f2a', ARL = '#b8804e';
+  function armorBase(t, rows) {
+    clearTile(t);
+    for (const [y, xa, xb] of rows)
+      for (let x = xa; x <= xb; x++) px(t, x, y, (x + y) % 3 ? AR : ARL);
+    for (const [y, xa, xb] of rows) { px(t, xa, y, ARD); px(t, xb, y, ARD); }
+  }
+  armorBase(TILE.ITEM_HELMET, [[4,3,12],[5,2,13],[6,2,13],[7,2,4],[7,11,13],[8,2,4],[8,11,13]]);
+  armorBase(TILE.ITEM_CHEST, [[3,2,4],[3,11,13],[4,2,5],[4,10,13],[5,2,13],[6,3,12],[7,3,12],[8,3,12],[9,3,12],[10,3,12],[11,3,12]]);
+  armorBase(TILE.ITEM_LEGS, [[3,3,12],[4,3,12],[5,3,12],[6,3,6],[6,9,12],[7,3,6],[7,9,12],[8,3,6],[8,9,12],[9,3,6],[9,9,12],[10,3,6],[10,9,12],[11,3,6],[11,9,12]]);
+  armorBase(TILE.ITEM_BOOTS, [[6,2,6],[6,9,13],[7,2,6],[7,9,13],[8,2,7],[8,9,14],[9,2,7],[9,9,14]]);
 
   // --- sun & moon ---
   fill(TILE.SUN, '#fdf2b0');

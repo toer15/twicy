@@ -8,7 +8,10 @@ const App = {
   netAddress: null,      // address we're currently connected to (null = none)
   renderer: null,
   playerMeshes: null,
+  mobMeshes: null,
+  mobTextures: new Map(),
   skinTextures: new Map(),
+  serverInfo: { addrs: [], port: 0 },
   heldMeshCache: new Map(),
   menu: null,
   game: null,
@@ -84,7 +87,10 @@ function resolvePending(type, msg) {
 
 function setupNetHandlers() {
   const n = App.net;
-  n.on('hello', m => resolvePending('hello', m));
+  n.on('hello', m => {
+    App.serverInfo = { addrs: m.addrs || [], port: m.port || 0 };
+    resolvePending('hello', m);
+  });
   n.on('worlds', m => resolvePending('worlds', m.list || []));
   n.on('created', m => resolvePending('created', m.id));
   n.on('deleted', m => resolvePending('deleted', m.id));
@@ -112,6 +118,19 @@ function setupNetHandlers() {
   n.on('join', m => App.game && App.game.onPlayerJoin(m));
   n.on('leave', m => App.game && App.game.onPlayerLeave(m));
   n.on('chat', m => App.game && HUD.addChat(m.from, m.text, !!m.sys));
+  n.on('sim', m => App.game && App.game.setSim(!!m.you));
+  n.on('mobs', m => App.game && App.game.mobs.onBatch(m.list || []));
+  n.on('mobhit', m => App.game && App.game.mobs.applyHit(m.id, m.dmg, m.kx, m.kz, m.by));
+  n.on('mobatk', m => App.game && App.game.hurtPlayer(m.dmg, [m.kx, 4.5, m.kz]));
+  n.on('mobdrop', m => App.game && App.game.drops.spawn(m.id, m.x, m.y, m.z));
+  n.on('setMany', m => App.game && App.game.onSetMany(m));
+  n.on('vis', m => App.game && App.game.onVisChange(m.vis));
+  n.on('flist', m => {
+    if (!resolvePending('flist', m) && App.menu && App.menu.onFriendList) App.menu.onFriendList(m);
+    if (App.game) App.game.friendData = m;
+  });
+  n.on('fsearch', m => resolvePending('fsearch', m));
+  n.on('invited', m => showInviteToast(m));
   n.on('time', m => App.game && App.game.syncTime(m.time));
   n.on('gamemode', m => App.game && App.game.setGamemode(m.mode));
 }
@@ -141,9 +160,20 @@ window.addEventListener('DOMContentLoaded', () => {
     },
     createWorld: async o => {
       await ensureConnected(App.menu.address);
-      App.net.send({ t: 'create', name: o.name, seed: o.seed, mode: o.mode });
+      App.net.send({ t: 'create', name: o.name, seed: o.seed, mode: o.mode, visibility: o.visibility, mobs: o.mobs });
       return waitFor('created', 5000);
     },
+    friendList: async () => {
+      await ensureConnected(App.menu.address);
+      App.net.send({ t: 'flist' });
+      return waitFor('flist', 5000);
+    },
+    friendSearch: async q => {
+      await ensureConnected(App.menu.address);
+      App.net.send({ t: 'fsearch', q });
+      return waitFor('fsearch', 5000);
+    },
+    friendAction: msg => App.net.send(msg),
     deleteWorld: async id => {
       await ensureConnected(App.menu.address);
       App.net.send({ t: 'delete', id });
@@ -167,10 +197,59 @@ window.addEventListener('DOMContentLoaded', () => {
   App.menu.show('title');
 });
 
+function showInviteToast(m) {
+  const el = document.getElementById('invite-toast');
+  document.getElementById('invite-text').textContent = `${m.from} invited you to "${m.worldName}"`;
+  el.classList.remove('hidden');
+  Sfx.pop();
+  document.getElementById('invite-join').onclick = async () => {
+    el.classList.add('hidden');
+    if (App.game) App.game.quitToTitle();
+    try {
+      showLoading('Joining world…');
+      App.net.send({ t: 'join', id: m.worldId });
+      const msg = await waitFor('world', 10000);
+      await startGame(msg);
+    } catch (e) {
+      hideLoading();
+      App.menu.toast(e.message);
+    }
+  };
+  document.getElementById('invite-dismiss').onclick = () => el.classList.add('hidden');
+  setTimeout(() => el.classList.add('hidden'), 30000);
+}
+
+function getMobTexture(kind) {
+  let tex = App.mobTextures.get(kind);
+  if (!tex) {
+    tex = App.renderer.textureFromCanvas(buildMobTexture(kind), true, false);
+    App.mobTextures.set(kind, tex);
+  }
+  return tex;
+}
+
+function particlesLevel() {
+  return App.settings.particles === 'off' ? 0 : App.settings.particles === 'reduced' ? 0.4 : 1;
+}
+
+const LOADING_TIPS = [
+  'Tip: punch trees to get logs, then press E to craft',
+  'Tip: stone needs a pickaxe — or it drops nothing',
+  'Tip: monsters come out at night… craft a sword!',
+  'Tip: right-click a crafting table for the 3x3 grid',
+  'Tip: cows drop leather — craft yourself some armor',
+  'Tip: double-tap Space to fly in creative mode',
+  'Tip: press F5 for third person, F3 for debug info',
+];
 function showLoading(text, pct) {
   const el = document.getElementById('loading');
+  if (el.classList.contains('hidden')) {
+    document.getElementById('loading-tip').textContent = LOADING_TIPS[(Math.random() * LOADING_TIPS.length) | 0];
+  }
   el.classList.remove('hidden');
-  el.querySelector('.loading-text').textContent = text + (pct !== undefined ? ` ${pct | 0}%` : '');
+  el.querySelector('.loading-text').textContent = text;
+  const fill = document.getElementById('loading-fill');
+  fill.style.width = (pct !== undefined ? clamp(pct, 2, 100) : 6) + '%';
 }
 function hideLoading() { document.getElementById('loading').classList.add('hidden'); }
 
@@ -210,14 +289,14 @@ async function startGame(worldMsg) {
   if (!App.renderer) {
     App.renderer = new Renderer(document.getElementById('game'));
     App.playerMeshes = buildPlayerMeshes(App.renderer);
+    App.mobMeshes = buildMobMeshes(App.renderer);
   }
   App.game = new Game(worldMsg);
   await App.game.prepareSpawn();
   App.menu.hide();
   HUD.show();
   App.game.running = true;
-  hideLoading();
-  App.game.showLockOverlay(true);
+  App.game.bootPhase = true; // keep the Minecraft loading screen up while chunks mesh
   requestAnimationFrame(ts => App.game && App.game.frame(ts));
 }
 
@@ -243,17 +322,26 @@ class Game {
     this.time = msg.time || 90; // morning
     this.running = false;
 
+    this.owner = msg.owner || '';
+    this.visibility = msg.visibility || 'public';
+    this.mobsEnabled = msg.mobs !== false;
     this.player = new Player(this.world, msg.mode);
     this.inv = new Inventory();
     this.remotes = new RemotePlayers();
     this.particles = new Particles();
     this.drops = new Drops();
+    this.mobs = new Mobs(this);
+    this.mobs.enabled = this.mobsEnabled;
+    this.mobs.setSim(msg.sim !== false);
+    if (msg.sim !== false && msg.mobsData) this.mobs.load(msg.mobsData);
+    this.weather = new Weather(String(msg.seed));
     for (const p of msg.players || []) this.remotes.add(p);
 
     // restore per-player data saved on the server
     const you = msg.you;
     if (you) {
       if (Array.isArray(you.inv)) this.inv.load(you.inv);
+      if (Array.isArray(you.armor)) this.inv.loadArmor(you.armor);
       if (you.gamemode && (you.gamemode === 'survival' || you.gamemode === 'creative')) {
         this.player.mode = you.gamemode;
       }
@@ -289,14 +377,14 @@ class Game {
 
     this._bindEvents();
     HUD.updateHotbar(this.inv);
-    HUD.setHealth(this.player.health);
+    HUD.setHealth(this.player.health, this.inv.armorPoints());
     HUD.setHealthVisible(this.player.mode === 'survival');
     HUD.addChat(null, `Joined "${this.worldName}" (${this.worldMode})`, true);
     HUD.addChat(null, 'Press T to chat, /help for commands', true);
 
     this.player.onDamage = () => {
       HUD.flash();
-      HUD.setHealth(this.player.health);
+      HUD.setHealth(this.player.health, this.inv.armorPoints());
       this.invDirty = true;
     };
     this.player.onDeath = () => this.showDeath(true);
@@ -315,7 +403,7 @@ class Game {
         this.world.ensureChunk(cx + dx, cz + dz);
         done++;
         if (done % 5 === 0) {
-          showLoading('Generating terrain…', (done / total) * 100);
+          showLoading('Generating terrain…', (done / total) * 55);
           await new Promise(r => setTimeout(r, 0));
         }
       }
@@ -327,6 +415,86 @@ class Game {
     }
     this.player.teleport(start);
     this.player._unstick();
+  }
+
+  netSend(obj) { App.net.send(obj); }
+
+  setSim(you) {
+    this.mobs.setSim(you);
+    if (you) HUD.addChat(null, 'You are now hosting the mobs in this world', true);
+  }
+
+  onVisChange(vis) {
+    this.visibility = vis;
+    this.updatePausePanel();
+  }
+
+  // mob damage to me (armor reduces it; knockback shoves the player)
+  hurtPlayer(dmg, knock) {
+    if (this.player.dead || this.player.mode === 'creative') return;
+    const pts = this.inv.armorPoints();
+    const reduced = Math.max(1, Math.round(dmg * (1 - Math.min(0.6, pts * 0.04))));
+    this.player.damage(reduced);
+    if (knock) {
+      this.player.vel[0] += knock[0];
+      this.player.vel[1] = Math.max(this.player.vel[1], knock[1]);
+      this.player.vel[2] += knock[2];
+    }
+  }
+
+  // creeper explosion: carve a sphere, fling particles, hurt nearby players
+  applyExplosion(cx, cy, cz, radius) {
+    Sfx.explosion();
+    const blocks = [];
+    const r = Math.ceil(radius);
+    for (let dy = -r; dy <= r; dy++)
+      for (let dz = -r; dz <= r; dz++)
+        for (let dx = -r; dx <= r; dx++) {
+          if (dx * dx + dy * dy + dz * dz > radius * radius) continue;
+          const x = Math.floor(cx) + dx, y = Math.floor(cy) + dy, z = Math.floor(cz) + dz;
+          const id = this.world.getBlock(x, y, z);
+          if (id === BL.AIR || id === BL.BEDROCK || id === BL.WATER) continue;
+          blocks.push([x, y, z, 0]);
+          if (blocks.length > 250) break;
+        }
+    for (const [x, y, z] of blocks) this.world.setBlock(x, y, z, BL.AIR, true);
+    if (blocks.length) {
+      this.particles.burst(Math.floor(cx), Math.floor(cy), Math.floor(cz), BL.DIRT, Math.round(30 * particlesLevel()));
+      App.net.send({ t: 'setMany', blocks, boom: { x: cx, y: cy, z: cz, r: radius } });
+    }
+    this._boomDamage(cx, cy, cz, radius);
+  }
+
+  _boomDamage(cx, cy, cz, radius) {
+    const p = this.player.pos;
+    const d = Math.hypot(p[0] - cx, p[1] + 0.9 - cy, p[2] - cz);
+    const range = radius * 1.8;
+    if (d < range) {
+      const dmg = Math.round(12 * (1 - d / range));
+      const kx = (p[0] - cx) / (d || 1) * 9, kz = (p[2] - cz) / (d || 1) * 9;
+      this.hurtPlayer(dmg, [kx, 6, kz]);
+    }
+    HUD.flash('rgba(255,200,80,0.3)');
+  }
+
+  onSetMany(m) {
+    for (const b of m.blocks || []) {
+      if (Array.isArray(b) && b.length >= 4) this.world.setBlock(b[0], b[1], b[2], b[3], true);
+    }
+    if (m.boom) {
+      Sfx.explosion();
+      this.particles.burst(Math.floor(m.boom.x), Math.floor(m.boom.y), Math.floor(m.boom.z), BL.DIRT, Math.round(30 * particlesLevel()));
+      this._boomDamage(m.boom.x, m.boom.y, m.boom.z, m.boom.r || 2.6);
+    }
+  }
+
+  // mob drops are assigned to the killer; sim host routes them
+  spawnMobDrop(id, x, y, z, byName) {
+    if (!byName || byName === App.profile.name) {
+      this.drops.spawn(id, x, y, z);
+    } else {
+      App.net.send({ t: 'mobdrop', id, x, y, z, owner: byName });
+    }
   }
 
   // ---------- events ----------
@@ -343,16 +511,24 @@ class Game {
     on(document, 'keyup', e => this._keyup(e));
     on(document, 'pointerlockchange', () => {
       const locked = document.pointerLockElement === canvas;
-      if (!locked && this.running && !this.invUI.openState && !HUD.chatOpen && !this.player.dead && !this._quitting) {
+      if (!locked && this.running && !this.invUI.openState && !HUD.chatOpen && !this.player.dead && !this._quitting && !this.bootPhase) {
         this.setPaused(true);
       }
-      if (locked) this.showLockOverlay(false);
+      if (locked) {
+        // a lock granted late while a UI is open would swallow its clicks
+        if (this.invUI.openState || this.paused || HUD.chatOpen || this.player.dead) {
+          document.exitPointerLock();
+          return;
+        }
+        this.showLockOverlay(false);
+      }
     });
     on(document, 'mousemove', e => {
       if (document.pointerLockElement !== canvas) return;
       const s = 0.0023 * App.settings.sensitivity;
+      const my = App.settings.invertY ? -e.movementY : e.movementY;
       this.player.yaw -= e.movementX * s;
-      this.player.pitch = clamp(this.player.pitch - e.movementY * s, -1.567, 1.567);
+      this.player.pitch = clamp(this.player.pitch - my * s, -1.567, 1.567);
     });
     on(canvas, 'mousedown', e => {
       if (document.pointerLockElement !== canvas) return;
@@ -379,6 +555,11 @@ class Game {
     // pause menu buttons
     on(document.getElementById('pause-resume'), 'click', () => { Sfx.click(); this.setPaused(false); this.lockPointer(); });
     on(document.getElementById('pause-quit'), 'click', () => { Sfx.click(); this.quitToTitle(); });
+    on(document.getElementById('pause-settings'), 'click', () => { Sfx.click(); openSettings(); });
+    on(document.getElementById('pause-vis'), 'click', () => {
+      Sfx.click();
+      App.net.send({ t: 'setvis', vis: this.visibility === 'public' ? 'private' : 'public' });
+    });
     on(document.getElementById('death-respawn'), 'click', () => {
       Sfx.click();
       this.player.respawn();
@@ -387,35 +568,65 @@ class Game {
       this.lockPointer();
     });
     on(document.getElementById('death-quit'), 'click', () => { Sfx.click(); this.quitToTitle(); });
-    this._bindOptions();
   }
 
-  _bindOptions() {
-    const bind = (id, key, fmt) => {
-      const el = document.getElementById(id);
-      const lab = document.getElementById(id + '-val');
-      el.value = App.settings[key];
-      if (lab) lab.textContent = fmt ? fmt(App.settings[key]) : App.settings[key];
-      const fn = () => {
-        App.settings[key] = parseFloat(el.value);
-        if (lab) lab.textContent = fmt ? fmt(App.settings[key]) : App.settings[key];
-        saveJSON('twicy.settings', App.settings);
-      };
-      el.addEventListener('input', fn);
-      this._handlers.push([el, 'input', fn]);
-    };
-    bind('opt-dist', 'renderDist');
-    bind('opt-fov', 'fov');
-    bind('opt-sens', 'sensitivity', v => v.toFixed(1));
-    const bob = document.getElementById('opt-bob');
-    const snd = document.getElementById('opt-sound');
-    bob.checked = App.settings.viewBob;
-    snd.checked = App.settings.sound;
-    const bobFn = () => { App.settings.viewBob = bob.checked; saveJSON('twicy.settings', App.settings); };
-    const sndFn = () => { App.settings.sound = snd.checked; Sfx.enabled = snd.checked; saveJSON('twicy.settings', App.settings); };
-    bob.addEventListener('change', bobFn);
-    snd.addEventListener('change', sndFn);
-    this._handlers.push([bob, 'change', bobFn], [snd, 'change', sndFn]);
+  // pause panel: host info (LAN urls), visibility toggle, friend invites
+  updatePausePanel() {
+    const hostBox = document.getElementById('pause-host');
+    const info = document.getElementById('pause-host-info');
+    const visRow = document.getElementById('pause-vis-row');
+    const visBtn = document.getElementById('pause-vis');
+    const offline = App.netAddress === '@local';
+    hostBox.classList.toggle('hidden', false);
+    if (offline) {
+      info.innerHTML = '<small>Offline world — run <b>npm start</b> to host friends.</small>';
+      visRow.classList.add('hidden');
+    } else {
+      const addrs = App.serverInfo.addrs || [];
+      info.innerHTML =
+        `<small>World: <b>${escapeHTML(this.worldName)}</b> (${this.visibility}) • ${this.remotes.count + 1} playing</small>` +
+        (addrs.length
+          ? '<div class="lan-list">Friends on your network can join at:<br>' +
+            addrs.map(a => `<b>${escapeHTML(a)}</b>`).join('<br>') + '</div>'
+          : '');
+      const isOwner = this.owner === App.profile.name;
+      visRow.classList.toggle('hidden', !isOwner);
+      visBtn.textContent = this.visibility === 'public'
+        ? '🌍 World: public — click to make private'
+        : '🔒 World: private — click to make public';
+    }
+    // invite list from latest friend data
+    const invBox = document.getElementById('pause-invite');
+    const list = document.getElementById('pause-invite-list');
+    if (offline) { invBox.classList.add('hidden'); return; }
+    invBox.classList.remove('hidden');
+    list.innerHTML = '<small class="muted">Loading friends…</small>';
+    App.net.send({ t: 'flist' });
+    setTimeout(() => {
+      if (!this.paused) return;
+      const data = this.friendData;
+      list.innerHTML = '';
+      if (!data || !data.friends || !data.friends.length) {
+        list.innerHTML = '<small class="muted">No friends yet — add some from the title screen!</small>';
+        return;
+      }
+      for (const f of data.friends) {
+        const row = document.createElement('div');
+        row.className = 'friend-row';
+        row.innerHTML = `<span><span class="dot ${f.online ? 'on' : ''}"></span> ${escapeHTML(f.name)}</span>`;
+        const btn = document.createElement('button');
+        btn.className = 'btn primary sm';
+        btn.textContent = 'Invite';
+        btn.onclick = () => {
+          Sfx.pop();
+          App.net.send({ t: 'invite', to: f.name });
+          btn.textContent = 'Invited ✓';
+          btn.disabled = true;
+        };
+        row.appendChild(btn);
+        list.appendChild(row);
+      }
+    }, 350);
   }
 
   _unbindEvents() {
@@ -425,10 +636,32 @@ class Game {
 
   lockPointer() {
     const canvas = document.getElementById('game');
-    if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
+    if (document.pointerLockElement !== canvas) {
+      try {
+        const p = canvas.requestPointerLock();
+        if (p && p.catch) p.catch(() => {});
+      } catch (e) {}
+    }
+  }
+
+  // loading finished: drop straight into the game; only if the browser
+  // refuses to capture the mouse without a click do we show a hint
+  _finishBoot() {
+    this.bootPhase = false;
+    hideLoading();
+    Sfx.levelup();
+    this.lockPointer();
+    setTimeout(() => {
+      const canvas = document.getElementById('game');
+      if (this.running && document.pointerLockElement !== canvas &&
+          !this.paused && !this.player.dead && !this.invUI.openState && !HUD.chatOpen) {
+        this.showLockOverlay(true);
+      }
+    }, 500);
   }
 
   showLockOverlay(show) {
+    if (show && (this.invUI.openState || HUD.chatOpen || this.paused || this.player.dead)) show = false;
     document.getElementById('lock-overlay').classList.toggle('hidden', !show);
   }
 
@@ -451,7 +684,7 @@ class Game {
     if (k === 'KeyE') {
       e.preventDefault();
       this.invUI.toggle();
-      if (this.invUI.openState) document.exitPointerLock();
+      if (this.invUI.openState) { document.exitPointerLock(); this.showLockOverlay(false); }
       else this.lockPointer();
       return;
     }
@@ -540,6 +773,7 @@ class Game {
     this.paused = p;
     document.getElementById('pause').classList.toggle('hidden', !p);
     if (p) {
+      this.updatePausePanel();
       document.exitPointerLock();
       this.input = { f: 0, b: 0, l: 0, r: 0, jump: 0, down: 0, sprint: 0, sneak: 0 };
       this.mouse.left = this.mouse.right = false;
@@ -608,6 +842,18 @@ class Game {
 
   onLeftDown() {
     this.startSwing();
+    // attack mobs first (reach 3.2 like Minecraft)
+    const cam = this.player.camera(false);
+    const dir = dirFromAngles(this.player.yaw, this.player.pitch);
+    const mh = this.mobs.raycast(cam.pos, dir, 3.2);
+    if (mh) {
+      const blockHit = this.rayTarget();
+      if (!blockHit || blockHit.dist > mh.dist) {
+        const dmg = attackDamage(this.heldItemId());
+        this.mobs.hit(mh.mob, dmg, dir[0] * 6, dir[2] * 6, App.profile.name);
+        return;
+      }
+    }
     const t = this.rayTarget();
     if (!t) return;
     if (this.player.mode === 'creative') {
@@ -631,7 +877,7 @@ class Game {
     this.world.setBlock(x, y, z, BL.AIR, true);
     App.net.send({ t: 'set', x, y, z, id: BL.AIR });
     Sfx.breakBlock();
-    this.particles.burst(x, y, z, id);
+    if (particlesLevel() > 0) this.particles.burst(x, y, z, id, Math.round(16 * particlesLevel()));
     if (this.player.mode === 'survival') {
       // tool rules decide the drop (e.g. stone needs a pickaxe)
       const info = breakInfo(id, this.heldItemId());
@@ -678,7 +924,7 @@ class Game {
       this._digSfxT = 0;
       Sfx.dig();
       this.startSwing();
-      this.particles.hit(t, id);
+      if (particlesLevel() > 0) this.particles.hit(t, id);
     }
     if (this.breaking.progress >= 1) {
       this.breakBlockAt(t.x, t.y, t.z);
@@ -707,13 +953,19 @@ class Game {
     const replaceable = cur === BL.AIR || (curDef && (curDef.fluid || curDef.cross));
     if (!replaceable) return;
     const def = BLOCKS[id];
-    // don't place a solid block inside yourself or another player
+    // don't place a solid block inside yourself, another player, or a mob
     if (def.solid) {
       if (this.player.intersectsBlock(x, y, z)) return;
       for (const rp of this.remotes.map.values()) {
         if (x + 1 > rp.pos[0] - 0.3 && x < rp.pos[0] + 0.3 &&
             z + 1 > rp.pos[2] - 0.3 && z < rp.pos[2] + 0.3 &&
             y + 1 > rp.pos[1] && y < rp.pos[1] + 1.8) return;
+      }
+      for (const m of this.mobs.list.values()) {
+        const tw = MOB_TYPES[m.type].w / 2, th = MOB_TYPES[m.type].h;
+        if (x + 1 > m.pos[0] - tw && x < m.pos[0] + tw &&
+            z + 1 > m.pos[2] - tw && z < m.pos[2] + tw &&
+            y + 1 > m.pos[1] && y < m.pos[1] + th) return;
       }
     }
     // flowers need soil
@@ -841,7 +1093,7 @@ class Game {
 
   sendState(dt) {
     this.sendTimer += dt;
-    if (this.sendTimer < 0.1) return;
+    if (this.sendTimer < 0.05) return; // 20 Hz for fluid remote movement
     this.sendTimer = 0;
     const p = this.player;
     const st = {
@@ -866,6 +1118,7 @@ class Game {
       pos: [round2(p.pos[0]), round2(p.pos[1]), round2(p.pos[2])],
       yaw: round2(p.yaw), pitch: round2(p.pitch),
       inv: this.inv.serialize(),
+      armor: this.inv.serializeArmor(),
       health: p.health,
       gamemode: p.mode,
     });
@@ -885,8 +1138,11 @@ class Game {
     this.setPausedSilent();
     this.remotes.clear();
     this.drops.clear();
+    this.mobs.clear();
+    this.weather.stop();
     this.particles.list = [];
     if (this.particleMesh) { App.renderer.deleteMesh(this.particleMesh); this.particleMesh = null; }
+    if (this.rainMesh) { App.renderer.deleteMesh(this.rainMesh); this.rainMesh = null; }
   }
 
   setPausedSilent() {
@@ -911,15 +1167,27 @@ class Game {
     const sunset = clamp(1 - Math.abs(e) / 0.22, 0, 1) * 0.55;
     sky = [lerp(sky[0], 0.95, sunset * B), lerp(sky[1], 0.45, sunset * B), lerp(sky[2], 0.28, sunset * B)];
 
+    // weather: rain greys the sky, lightning flashes white
+    const rain = this.rainLevel || 0;
+    let dl = dayLight * (1 - rain * 0.35);
+    if (rain > 0) {
+      const grey = [0.45 * dl, 0.47 * dl, 0.5 * dl];
+      sky = [lerp(sky[0], grey[0], rain * 0.8), lerp(sky[1], grey[1], rain * 0.8), lerp(sky[2], grey[2], rain * 0.8)];
+    }
+    if (this.weather && this.weather.flash > 0) {
+      const f = this.weather.flash * 0.7;
+      sky = [lerp(sky[0], 1, f), lerp(sky[1], 1, f), lerp(sky[2], 1, f)];
+      dl = Math.min(1, dl + f);
+    }
     const dist = App.settings.renderDist * CHUNK;
     let env = {
       skyColor: sky,
       fogColor: sky.slice(),
-      fogNear: dist * 0.55,
-      fogFar: dist * 0.98,
-      dayLight,
+      fogNear: dist * (0.55 - rain * 0.15),
+      fogFar: dist * (0.98 - rain * 0.2),
+      dayLight: dl,
       sunAngle: sunAngle - Math.PI / 2, // renderer: 0 = overhead
-      starAlpha: clamp(-e * 2.4, 0, 1) * 0.95,
+      starAlpha: clamp(-e * 2.4, 0, 1) * 0.95 * (1 - rain),
     };
     if (this.player.eyesInWater) {
       env.skyColor = [0.06 * dayLight, 0.14 * dayLight, 0.38 * dayLight];
@@ -939,6 +1207,14 @@ class Game {
     this.fpsSmooth = lerp(this.fpsSmooth, 1 / Math.max(dt, 1e-4), 0.05);
     this.time += dt;
 
+    if (this.bootPhase) {
+      this.bootT = (this.bootT || 0) + dt;
+      const target = Math.min(45, (App.settings.renderDist * 2 - 1) ** 2);
+      const n = App.renderer.chunkMeshes.size;
+      showLoading('Building terrain…', 55 + Math.min(1, n / target) * 45);
+      if (n >= target || this.bootT > 9) this._finishBoot();
+    }
+
     const uiOpen = this.paused || this.invUI.openState || HUD.chatOpen || this.player.dead;
     const input = uiOpen ? { f: 0, b: 0, l: 0, r: 0, jump: 0, down: 0, sprint: 0, sneak: 0 } : this.input;
 
@@ -955,6 +1231,10 @@ class Game {
       if (this.swingAnim >= 1) this.swingAnim = -1;
     }
     this.remotes.tick(dt, this.time);
+    const envNow = this.env();
+    this.mobs.tick(dt, envNow.dayLight);
+    this.rainLevel = this.weather.tick(dt, this.time, this.world,
+      this.player.camera(false), particlesLevel());
     this.particles.tick(dt, this.world);
     this.drops.tick(dt, this.world, this.player.dead ? null : this.player.pos, id => {
       if (this.inv.addItem(id, 1) > 0) return false; // inventory full
@@ -975,7 +1255,7 @@ class Game {
     if (this.debugOn) this.updateDebug();
     HUD.setUnderwater(this.player.eyesInWater);
     if (this.player.mode === 'survival') {
-      HUD.setHealth(this.player.health);
+      HUD.setHealth(this.player.health, this.inv.armorPoints());
       HUD.setAir(this.player.air);
     }
 
@@ -1000,8 +1280,9 @@ class Game {
     r.drawSky(env.sunAngle, env.starAlpha);
     r.drawChunksSolid(App.settings.renderDist);
 
-    // players
+    // players & mobs
     this.remotes.draw(r, App.playerMeshes, getSkinTexture, this.time);
+    this.mobs.draw(r, App.playerMeshes, App.mobMeshes, getMobTexture, getSkinTexture, this.time);
     if (this.thirdPerson && !this.player.dead) {
       const p = this.player;
       const hSpeed = Math.hypot(p.vel[0], p.vel[2]);
@@ -1041,7 +1322,19 @@ class Game {
     }
 
     r.drawChunksWater(App.settings.renderDist);
-    r.drawClouds(this.time * 0.0006);
+    if (App.settings.clouds) r.drawClouds(this.time * 0.0006);
+    if (this.weather.drops.length) {
+      const right = [Math.cos(cam.yaw), 0, -Math.sin(cam.yaw)];
+      const data = this.weather.buildMesh(right);
+      if (!this.rainMesh) this.rainMesh = r.makeMesh(data, 'TRIANGLES', true);
+      else r.updateMesh(this.rainMesh, data);
+      const gl = r.gl;
+      gl.depthMask(false);
+      gl.uniform1f(r.u.uAlphaMul, 0.45);
+      r.drawBox(this.rainMesh, r.IDENT, r.atlasTex);
+      gl.uniform1f(r.u.uAlphaMul, 1);
+      gl.depthMask(true);
+    }
     this.remotes.drawNametags(r);
     if (this.thirdPerson) {
       if (!this.ownTag) this.ownTag = r.makeTextTexture(App.profile.name);

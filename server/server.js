@@ -66,7 +66,7 @@ function worldFile(id) {
 
 function listWorldFiles() {
   try {
-    return fs.readdirSync(WORLDS_DIR).filter(f => f.endsWith('.json'));
+    return fs.readdirSync(WORLDS_DIR).filter(f => f.endsWith('.json') && !f.startsWith('_'));
   } catch (e) { return []; }
 }
 
@@ -78,19 +78,34 @@ function readWorldMeta(file) {
   } catch (e) { return null; }
 }
 
-function listWorlds() {
+function canSee(meta, invitedSet, name) {
+  if ((meta.visibility || 'private') === 'public') return true;
+  if (!meta.owner) return true; // legacy worlds without an owner stay visible
+  const k = userKey(name);
+  if (userKey(meta.owner) === k) return true;
+  return invitedSet && invitedSet.has(k);
+}
+
+function listWorlds(forName) {
   const out = [];
   const seen = new Set();
+  const push = (meta, players, invitedSet) => {
+    if (!canSee(meta, invitedSet, forName)) return;
+    out.push({ id: meta.id, name: meta.name, seed: meta.seed, mode: meta.mode,
+      lastPlayed: meta.lastPlayed, players,
+      owner: meta.owner || '', visibility: meta.visibility || 'private',
+      mobs: meta.mobs !== false,
+      yours: userKey(meta.owner) === userKey(forName) });
+  };
   for (const [id, w] of loaded) {
-    out.push({ id, name: w.meta.name, seed: w.meta.seed, mode: w.meta.mode,
-      lastPlayed: w.meta.lastPlayed, players: w.sessions.size });
+    push(w.meta, w.sessions.size, w.invited);
     seen.add(id);
   }
   for (const f of listWorldFiles()) {
     const data = readWorldMeta(f);
     if (!data || seen.has(data.id)) continue;
-    out.push({ id: data.id, name: data.name, seed: data.seed, mode: data.mode,
-      lastPlayed: data.lastPlayed, players: 0 });
+    push({ ...data, mobs: data.mobs !== false, visibility: data.visibility || 'private' },
+      0, new Set((data.invited || []).map(userKey)));
   }
   out.sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0));
   return out;
@@ -105,11 +120,16 @@ function loadWorld(id) {
   if (!data || data.id !== id) return null;
   const w = {
     meta: { id: data.id, name: data.name, seed: data.seed, mode: data.mode,
-      created: data.created, lastPlayed: data.lastPlayed },
+      created: data.created, lastPlayed: data.lastPlayed,
+      owner: data.owner || '', visibility: data.visibility || 'private',
+      mobs: data.mobs !== false },
     edits: data.edits || {},
     playersData: data.players || {},
+    mobsData: data.mobsData || [],
+    invited: new Set((data.invited || []).map(userKey)),
     time: typeof data.time === 'number' ? data.time : 90,
     sessions: new Set(),
+    simId: 0,
     dirty: false,
   };
   loaded.set(id, w);
@@ -120,6 +140,9 @@ function saveWorld(w) {
   const out = {
     id: w.meta.id, name: w.meta.name, seed: w.meta.seed, mode: w.meta.mode,
     created: w.meta.created, lastPlayed: w.meta.lastPlayed,
+    owner: w.meta.owner, visibility: w.meta.visibility, mobs: w.meta.mobs,
+    invited: [...(w.invited || [])],
+    mobsData: w.mobsData || [],
     time: Math.round(w.time * 10) / 10,
     edits: w.edits,
     players: w.playersData,
@@ -142,6 +165,72 @@ function unloadIfEmpty(w) {
   }
 }
 
+// ---------------- friends (persistent, name-based) ----------------
+
+const FRIENDS_FILE = path.join(WORLDS_DIR, '_friends.json');
+let friendsDB = { users: {} };
+try { friendsDB = JSON.parse(fs.readFileSync(FRIENDS_FILE, 'utf8')) || { users: {} }; } catch (e) {}
+if (!friendsDB.users) friendsDB.users = {};
+
+let friendsSaveTimer = null;
+function saveFriends() {
+  if (friendsSaveTimer) return;
+  friendsSaveTimer = setTimeout(() => {
+    friendsSaveTimer = null;
+    try { fs.writeFileSync(FRIENDS_FILE, JSON.stringify(friendsDB)); } catch (e) {}
+  }, 1500);
+}
+
+function userKey(name) { return String(name || '').toLowerCase(); }
+
+function userRec(name, create) {
+  const k = userKey(name);
+  if (!friendsDB.users[k] && create) {
+    friendsDB.users[k] = { name: String(name), friends: [], requests: [] };
+    saveFriends();
+  }
+  return friendsDB.users[k] || null;
+}
+
+function findSessionByName(name) {
+  const k = userKey(name);
+  for (const s of sessions.values()) {
+    if (s.helloDone && userKey(s.name) === k) return s;
+  }
+  return null;
+}
+
+function friendInfo(sess) {
+  const rec = userRec(sess.name, true);
+  const friends = rec.friends.map(k => {
+    const r = friendsDB.users[k];
+    const online = findSessionByName(k);
+    const w = online && online.world;
+    return {
+      name: r ? r.name : k,
+      online: !!online,
+      world: w ? (w.meta.visibility === 'public' || (w.invited && w.invited.has(userKey(sess.name))) || userKey(w.meta.owner) === userKey(sess.name)
+        ? { id: w.meta.id, name: w.meta.name } : { name: 'a private world' }) : null,
+    };
+  });
+  return { t: 'flist', friends, requests: rec.requests.map(k => (friendsDB.users[k] ? friendsDB.users[k].name : k)) };
+}
+
+function pushFriendUpdate(name) {
+  const s = findSessionByName(name);
+  if (s) send(s, friendInfo(s));
+}
+
+function lanAddresses() {
+  const out = [];
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs || []) {
+      if (a.family === 'IPv4' && !a.internal) out.push(`http://${a.address}:${PORT}`);
+    }
+  }
+  return out;
+}
+
 // ---------------- sessions & protocol ----------------
 
 let nextId = 1;
@@ -162,6 +251,9 @@ function broadcast(w, obj, exceptId) {
     if (s && s.id !== exceptId) s.conn.send(str);
   }
 }
+
+function num(v) { return typeof v === 'number' && isFinite(v) ? v : 0; }
+function clamp01(v, lo, hi) { v = num(v); return v < lo ? lo : v > hi ? hi : v; }
 
 function sanitizeName(name) {
   const clean = String(name || '').replace(/[^\w\- ]/g, '').trim().slice(0, MAX_NAME);
@@ -199,6 +291,12 @@ function leaveWorld(sess, notify = true) {
     broadcast(w, { t: 'leave', id: sess.id });
     broadcast(w, { t: 'chat', sys: true, text: `${sess.name} left the world` });
   }
+  // hand the mob simulation to the longest-connected remaining player
+  if (w.simId === sess.id && w.sessions.size > 0) {
+    w.simId = Math.min(...w.sessions);
+    const ns = sessions.get(w.simId);
+    if (ns) send(ns, { t: 'sim', you: true });
+  }
   unloadIfEmpty(w);
 }
 
@@ -207,11 +305,13 @@ const handlers = {
     sess.name = sanitizeName(m.name);
     sess.skin = String(m.skin || 'explorer').slice(0, 24);
     sess.helloDone = true;
-    send(sess, { t: 'hello', ok: true, name: sess.name, motd: 'Welcome to Twicycraft!' });
+    userRec(sess.name, true);
+    send(sess, { t: 'hello', ok: true, name: sess.name, motd: 'Welcome to Twicycraft!',
+      addrs: lanAddresses(), port: PORT });
   },
 
   worlds(sess) {
-    send(sess, { t: 'worlds', list: listWorlds() });
+    send(sess, { t: 'worlds', list: listWorlds(sess.name) });
   },
 
   create(sess, m) {
@@ -221,11 +321,16 @@ const handlers = {
     if (listWorldFiles().length > 200) return sendErr(sess, 'created', 'Too many worlds on this server');
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     const w = {
-      meta: { id, name, seed, mode, created: Date.now(), lastPlayed: Date.now() },
+      meta: { id, name, seed, mode, created: Date.now(), lastPlayed: Date.now(),
+        owner: sess.name, visibility: m.visibility === 'private' ? 'private' : 'public',
+        mobs: m.mobs !== false },
       edits: {},
       playersData: {},
+      mobsData: [],
+      invited: new Set(),
       time: 90,
       sessions: new Set(),
+      simId: 0,
       dirty: true,
     };
     loaded.set(id, w);
@@ -236,7 +341,10 @@ const handlers = {
 
   delete(sess, m) {
     const id = String(m.id || '');
-    const w = loaded.get(id);
+    const w = loaded.get(id) || loadWorld(id);
+    if (w && w.meta.owner && userKey(w.meta.owner) !== userKey(sess.name)) {
+      return sendErr(sess, 'deleted', 'Only the owner can delete this world');
+    }
     if (w && w.sessions.size > 0) return sendErr(sess, 'deleted', 'World is in use');
     loaded.delete(id);
     try { fs.unlinkSync(worldFile(id)); } catch (e) {}
@@ -249,6 +357,7 @@ const handlers = {
     const id = String(m.id || '');
     const w = loadWorld(id);
     if (!w) return sendErr(sess, 'world', 'World not found');
+    if (!canSee(w.meta, w.invited, sess.name)) return sendErr(sess, 'world', 'This world is private — ask the owner for an invite');
     if (sess.world) leaveWorld(sess);
     if (w.sessions.size >= 32) return sendErr(sess, 'world', 'World is full');
 
@@ -256,6 +365,7 @@ const handlers = {
     sess.world = w;
     sess.lastState = null;
     w.sessions.add(sess.id);
+    if (!w.simId || !sessions.has(w.simId) || !w.sessions.has(w.simId)) w.simId = sess.id;
     w.meta.lastPlayed = Date.now();
     w.dirty = true;
 
@@ -268,6 +378,9 @@ const handlers = {
     send(sess, {
       t: 'world',
       id, name: w.meta.name, seed: w.meta.seed, mode: w.meta.mode,
+      owner: w.meta.owner, visibility: w.meta.visibility, mobs: w.meta.mobs,
+      sim: w.simId === sess.id,
+      mobsData: w.simId === sess.id ? (w.mobsData || []) : [],
       time: w.time,
       edits: w.edits,
       players: roster,
@@ -322,6 +435,157 @@ const handlers = {
     if (VALID_MODES.has(m.gamemode)) pd.gamemode = m.gamemode;
     w.playersData[sess.name] = pd;
     w.dirty = true;
+  },
+
+  // owner toggles world visibility from the pause menu
+  setvis(sess, m) {
+    const w = sess.world;
+    if (!w) return;
+    if (userKey(w.meta.owner) !== userKey(sess.name)) return;
+    w.meta.visibility = m.vis === 'public' ? 'public' : 'private';
+    w.dirty = true;
+    broadcast(w, { t: 'vis', vis: w.meta.visibility });
+    broadcast(w, { t: 'chat', sys: true, text: `${sess.name} made the world ${w.meta.visibility}` });
+  },
+
+  // ---- mob sync: the sim host broadcasts, others send hits back ----
+  mobs(sess, m) {
+    const w = sess.world;
+    if (!w || w.simId !== sess.id || !Array.isArray(m.list)) return;
+    if (m.list.length > 64) return;
+    broadcast(w, { t: 'mobs', list: m.list }, sess.id);
+  },
+
+  mobhit(sess, m) {
+    const w = sess.world;
+    if (!w) return;
+    const sim = sessions.get(w.simId);
+    if (sim && sim.id !== sess.id) {
+      send(sim, { t: 'mobhit', id: m.id | 0, dmg: clamp01(m.dmg, 0, 10), kx: num(m.kx), kz: num(m.kz), by: sess.name });
+    }
+  },
+
+  mobatk(sess, m) {
+    const w = sess.world;
+    if (!w || w.simId !== sess.id) return;
+    const target = sessions.get(m.target | 0);
+    if (target && target.world === w) {
+      send(target, { t: 'mobatk', dmg: clamp01(m.dmg, 0, 10), kx: num(m.kx), kz: num(m.kz) });
+    }
+  },
+
+  mobdrop(sess, m) {
+    const w = sess.world;
+    if (!w || w.simId !== sess.id) return;
+    const target = findSessionByName(m.owner);
+    if (target && target.world === w) {
+      send(target, { t: 'mobdrop', id: m.id | 0, x: num(m.x), y: num(m.y), z: num(m.z) });
+    }
+  },
+
+  mobsave(sess, m) {
+    const w = sess.world;
+    if (!w || w.simId !== sess.id || !Array.isArray(m.list)) return;
+    w.mobsData = m.list.slice(0, 40);
+    w.dirty = true;
+  },
+
+  // batched block changes (explosions)
+  setMany(sess, m) {
+    const w = sess.world;
+    if (!w || !Array.isArray(m.blocks) || m.blocks.length > 300) return;
+    for (const b of m.blocks) {
+      if (!Array.isArray(b) || b.length < 4) continue;
+      const [x, y, z, id] = b.map(v => v | 0);
+      if (y < 0 || y >= 96 || Math.abs(x) > 1e6 || Math.abs(z) > 1e6) continue;
+      w.edits[`${x},${y},${z}`] = id;
+    }
+    w.dirty = true;
+    broadcast(w, { t: 'setMany', blocks: m.blocks, boom: m.boom }, sess.id);
+  },
+
+  // ---- friends ----
+  fsearch(sess, m) {
+    const q = userKey(m.q).trim();
+    const out = [];
+    if (q.length >= 2) {
+      const me = userRec(sess.name, true);
+      const myKey = userKey(sess.name);
+      for (const [k, r] of Object.entries(friendsDB.users)) {
+        if (k === myKey || !k.includes(q)) continue;
+        out.push({ name: r.name, online: !!findSessionByName(k),
+          friend: me.friends.includes(k), requested: (friendsDB.users[k].requests || []).includes(myKey) });
+        if (out.length >= 12) break;
+      }
+    }
+    send(sess, { t: 'fsearch', list: out });
+  },
+
+  frequest(sess, m) {
+    const me = userRec(sess.name, true);
+    const target = userRec(m.to, false);
+    if (!target) return sendErr(sess, 'fsearch', 'No player with that name has been here');
+    const myKey = userKey(sess.name), toKey = userKey(m.to);
+    if (toKey === myKey || me.friends.includes(toKey)) return;
+    if (!target.requests.includes(myKey)) {
+      target.requests.push(myKey);
+      saveFriends();
+      pushFriendUpdate(toKey);
+    }
+    send(sess, friendInfo(sess));
+  },
+
+  faccept(sess, m) {
+    const me = userRec(sess.name, true);
+    const fromKey = userKey(m.from);
+    if (!me.requests.includes(fromKey)) return;
+    me.requests = me.requests.filter(k => k !== fromKey);
+    const other = userRec(fromKey, true);
+    if (!me.friends.includes(fromKey)) me.friends.push(fromKey);
+    if (!other.friends.includes(userKey(sess.name))) other.friends.push(userKey(sess.name));
+    saveFriends();
+    send(sess, friendInfo(sess));
+    pushFriendUpdate(fromKey);
+  },
+
+  fdecline(sess, m) {
+    const me = userRec(sess.name, true);
+    me.requests = me.requests.filter(k => k !== userKey(m.from));
+    saveFriends();
+    send(sess, friendInfo(sess));
+  },
+
+  fremove(sess, m) {
+    const me = userRec(sess.name, true);
+    const k = userKey(m.name);
+    me.friends = me.friends.filter(f => f !== k);
+    const other = userRec(k, false);
+    if (other) other.friends = other.friends.filter(f => f !== userKey(sess.name));
+    saveFriends();
+    send(sess, friendInfo(sess));
+    pushFriendUpdate(k);
+  },
+
+  flist(sess) {
+    send(sess, friendInfo(sess));
+  },
+
+  // invite a friend to your current world (works for private worlds)
+  invite(sess, m) {
+    const w = sess.world;
+    if (!w) return;
+    const me = userRec(sess.name, true);
+    const k = userKey(m.to);
+    if (!me.friends.includes(k)) return;
+    w.invited.add(k);
+    w.dirty = true;
+    const target = findSessionByName(k);
+    if (target) {
+      send(target, { t: 'invited', from: sess.name, worldId: w.meta.id, worldName: w.meta.name });
+      send(sess, { t: 'chat', sys: true, text: `Invite sent to ${m.to}` });
+    } else {
+      send(sess, { t: 'chat', sys: true, text: `${m.to} is offline — they can join when they're back (invite saved)` });
+    }
   },
 
   chat(sess, m) {
@@ -393,6 +657,9 @@ attachWebSocketServer(httpServer, '/ws', conn => {
   conn.onclose = () => {
     leaveWorld(sess);
     sessions.delete(sess.id);
+    // let online friends see this player go offline
+    const rec = sess.helloDone && userRec(sess.name, false);
+    if (rec) for (const f of rec.friends) pushFriendUpdate(f);
   };
 });
 

@@ -112,7 +112,8 @@ class LocalServer {
       const w = this._read(k.slice(LS_WORLD_PREFIX.length));
       if (w) {
         list.push({ id: w.id, name: w.name, seed: w.seed, mode: w.mode,
-          lastPlayed: w.lastPlayed, players: this.world && this.world.id === w.id ? 1 : 0 });
+          lastPlayed: w.lastPlayed, players: this.world && this.world.id === w.id ? 1 : 0,
+          owner: w.owner || this.name, visibility: 'private', mobs: w.mobs !== false, yours: true });
       }
     }
     list.sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0));
@@ -126,8 +127,11 @@ class LocalServer {
       name: String(m.name || 'New World').slice(0, 28).trim() || 'New World',
       seed: String(m.seed || Date.now()).slice(0, 28),
       mode: m.mode === 'creative' ? 'creative' : 'survival',
+      mobs: m.mobs !== false,
+      visibility: 'private',
+      owner: this.name,
       created: Date.now(), lastPlayed: Date.now(),
-      time: 90, edits: {}, players: {},
+      time: 90, edits: {}, players: {}, mobsData: [],
     };
     if (!LocalStore.set(LS_WORLD_PREFIX + id, JSON.stringify(w))) {
       this.emit({ t: 'err', for: 'created', msg: 'Browser storage is full' });
@@ -159,6 +163,10 @@ class LocalServer {
     this.emit({
       t: 'world',
       id: w.id, name: w.name, seed: w.seed, mode: w.mode,
+      owner: w.owner || this.name, visibility: w.visibility || 'private',
+      mobs: w.mobs !== false,
+      sim: true, // offline: you always run the mobs
+      mobsData: w.mobsData || [],
       time: w.time, edits: w.edits, players: [],
       you: w.players[this.name] || null,
     });
@@ -189,6 +197,26 @@ class LocalServer {
   }
 
   _state() { /* nobody else to relay to */ }
+  _mobs() { /* nobody else to relay to */ }
+  _mobhit() {}
+  _setMany(m) {
+    const w = this.world;
+    if (!w || !Array.isArray(m.blocks)) return;
+    for (const b of m.blocks) {
+      if (Array.isArray(b) && b.length >= 4) w.edits[`${b[0] | 0},${b[1] | 0},${b[2] | 0}`] = b[3] | 0;
+    }
+    this._markDirty();
+  }
+  _mobsave(m) {
+    const w = this.world;
+    if (!w || !Array.isArray(m.list)) return;
+    w.mobsData = m.list.slice(0, 40);
+    this._markDirty();
+  }
+  _setvis() { this.emit({ t: 'chat', sys: true, text: 'Visibility only matters on a real server' }); }
+  _flist() { this.emit({ t: 'flist', friends: [], requests: [], offline: true }); }
+  _fsearch() { this.emit({ t: 'fsearch', list: [], offline: true }); }
+  _invite() { this.emit({ t: 'chat', sys: true, text: 'Friends need a real server — run npm start' }); }
 
   _pdata(m) {
     const w = this.world;

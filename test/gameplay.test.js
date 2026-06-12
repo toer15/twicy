@@ -24,7 +24,10 @@ const delay = ms => new Promise(r => setTimeout(r, ms));
     await page.click('#m-create'); // survival by default
     await page.waitForFunction('App.game && App.game.running === true', { timeout: 30000 });
     await page.waitForFunction('App.renderer.chunkMeshes.size > 8', { timeout: 30000 });
+    await page.waitForFunction('App.game.bootPhase === false', { timeout: 30000 });
     await page.evaluate(() => document.getElementById('lock-overlay').classList.add('hidden'));
+    // a mob wandering into the test area would disturb the scripted clicks
+    await page.evaluate(() => { App.game.mobs.enabled = false; App.game.mobs.clear(); });
 
     // ---- 1. "punch a tree": place a log 2 blocks ahead, mine it by hand ----
     const setup = await page.evaluate(() => {
@@ -61,7 +64,10 @@ const delay = ms => new Promise(r => setTimeout(r, ms));
     console.log('✓ walked over drop, log collected into inventory');
 
     // ---- 2. craft planks in the 2x2 grid via real UI clicks ----
-    await page.evaluate(() => App.game.invUI.open('player'));
+    await page.evaluate(() => {
+      document.getElementById('lock-overlay').classList.add('hidden');
+      App.game.invUI.open('player');
+    });
     await delay(300);
     const logSlotIdx = await page.evaluate(() => App.game.inv.findItem(BL.LOG));
     // hotbar slots are in .hotrow (inv index 0..8), main grid is indices 9..35

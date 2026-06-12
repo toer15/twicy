@@ -35,12 +35,16 @@ uniform float uAlphaTest;
 uniform float uAlphaMul;
 uniform float uColorMode;   // >0.5: flat uColor instead of texture
 uniform vec4 uColor;
+uniform vec4 uTint;         // rgb multiplier + alpha multiplier (hurt flash etc)
 uniform float uNoFog;
 out vec4 outColor;
 void main() {
   vec4 c = uColorMode > 0.5 ? uColor : texture(uTex, vUV);
   if (uAlphaTest > 0.5 && c.a < 0.5) discard;
   c.rgb *= vLight * uDayLight;
+  c.rgb = mix(c.rgb, vec3(1.0, 0.2, 0.2), uTint.r);  // hurt flash
+  c.rgb = mix(c.rgb, vec3(1.0), uTint.g);            // creeper flash
+  c.a *= uTint.a;
   c.a *= uAlphaMul;
   float fog = 0.0;
   if (uNoFog < 0.5) {
@@ -61,7 +65,7 @@ class Renderer {
     gl.useProgram(this.prog);
     this.u = {};
     for (const name of ['uProj','uView','uModel','uTex','uDayLight','uFogColor','uFogRange',
-      'uCamPos','uAlphaTest','uAlphaMul','uColorMode','uColor','uNoFog','uPointSize','uUVWorld','uUVOffset']) {
+      'uCamPos','uAlphaTest','uAlphaMul','uColorMode','uColor','uTint','uNoFog','uPointSize','uUVWorld','uUVOffset']) {
       this.u[name] = gl.getUniformLocation(this.prog, name);
     }
     gl.uniform1i(this.u.uTex, 0);
@@ -87,6 +91,7 @@ class Renderer {
     const gl = this.gl;
     gl.uniform1f(this.u.uAlphaTest, 0);
     gl.uniform1f(this.u.uAlphaMul, 1);
+    gl.uniform4f(this.u.uTint, 0, 0, 0, 1);
     gl.uniform1f(this.u.uColorMode, 0);
     gl.uniform1f(this.u.uNoFog, 0);
     gl.uniform1f(this.u.uUVWorld, 0);
@@ -401,10 +406,12 @@ class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, texture);
     if (opts.noFog) gl.uniform1f(this.u.uNoFog, 1);
     if (opts.alphaTest) gl.uniform1f(this.u.uAlphaTest, 1);
+    if (opts.tint) gl.uniform4fv(this.u.uTint, opts.tint);
     gl.uniformMatrix4fv(this.u.uModel, false, model);
     this._draw(mesh);
     if (opts.noFog) gl.uniform1f(this.u.uNoFog, 0);
     if (opts.alphaTest) gl.uniform1f(this.u.uAlphaTest, 0);
+    if (opts.tint) gl.uniform4f(this.u.uTint, 0, 0, 0, 1);
   }
 
   endWorld() {

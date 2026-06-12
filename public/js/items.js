@@ -8,6 +8,9 @@ const IT = {
   PICK_WOOD: 101, PICK_STONE: 102,
   AXE_WOOD: 103, AXE_STONE: 104,
   SHOVEL_WOOD: 105, SHOVEL_STONE: 106,
+  SWORD_WOOD: 107, SWORD_STONE: 108,
+  LEATHER: 109,
+  HELMET: 110, CHESTPLATE: 111, LEGGINGS: 112, BOOTS: 113,
 };
 
 const ITEMS = {};
@@ -23,6 +26,24 @@ defItem(IT.AXE_WOOD, { name: 'Wooden Axe', tile: TILE.ITEM_AXE_WOOD, tool: 'axe'
 defItem(IT.AXE_STONE, { name: 'Stone Axe', tile: TILE.ITEM_AXE_STONE, tool: 'axe', tier: 2, speed: 5, stack: 1 });
 defItem(IT.SHOVEL_WOOD, { name: 'Wooden Shovel', tile: TILE.ITEM_SHOVEL_WOOD, tool: 'shovel', tier: 1, speed: 3, stack: 1 });
 defItem(IT.SHOVEL_STONE, { name: 'Stone Shovel', tile: TILE.ITEM_SHOVEL_STONE, tool: 'shovel', tier: 2, speed: 5, stack: 1 });
+defItem(IT.SWORD_WOOD, { name: 'Wooden Sword', tile: TILE.ITEM_SWORD_WOOD, tool: 'sword', tier: 1, dmg: 4, stack: 1 });
+defItem(IT.SWORD_STONE, { name: 'Stone Sword', tile: TILE.ITEM_SWORD_STONE, tool: 'sword', tier: 2, dmg: 5, stack: 1 });
+defItem(IT.LEATHER, { name: 'Leather', tile: TILE.ITEM_LEATHER });
+defItem(IT.HELMET, { name: 'Leather Cap', tile: TILE.ITEM_HELMET, armorSlot: 0, armor: 1, stack: 1 });
+defItem(IT.CHESTPLATE, { name: 'Leather Tunic', tile: TILE.ITEM_CHEST, armorSlot: 1, armor: 3, stack: 1 });
+defItem(IT.LEGGINGS, { name: 'Leather Pants', tile: TILE.ITEM_LEGS, armorSlot: 2, armor: 2, stack: 1 });
+defItem(IT.BOOTS, { name: 'Leather Boots', tile: TILE.ITEM_BOOTS, armorSlot: 3, armor: 1, stack: 1 });
+
+// melee damage (half-hearts) for whatever is in hand
+function attackDamage(heldId) {
+  const it = ITEMS[heldId];
+  if (!it) return 1;
+  if (it.tool === 'sword') return it.dmg;
+  if (it.tool === 'axe') return it.tier >= 2 ? 4 : 3;
+  if (it.tool === 'pickaxe') return it.tier >= 2 ? 3 : 2;
+  if (it.tool === 'shovel') return 2;
+  return 1;
+}
 
 // unified lookups across blocks + items
 function thingDef(id) { return ITEMS[id] || BLOCKS[id] || null; }
@@ -35,8 +56,14 @@ const CREATIVE_ALL = CREATIVE_ITEMS.concat(Object.keys(ITEMS).map(Number));
 // ---------------- crafting ----------------
 // shaped patterns are row arrays of ids (0 = empty); matched against the
 // trimmed crafting grid, including the horizontally mirrored variant.
-const P = BL.PLANKS, S = IT.STICK, C = BL.COBBLE;
+const P = BL.PLANKS, S = IT.STICK, C = BL.COBBLE, L = IT.LEATHER;
 const RECIPES = [
+  { pattern: [[P], [P], [S]], out: IT.SWORD_WOOD, n: 1 },
+  { pattern: [[C], [C], [S]], out: IT.SWORD_STONE, n: 1 },
+  { pattern: [[L, L, L], [L, 0, L]], out: IT.HELMET, n: 1 },
+  { pattern: [[L, 0, L], [L, L, L], [L, L, L]], out: IT.CHESTPLATE, n: 1 },
+  { pattern: [[L, L, L], [L, 0, L], [L, 0, L]], out: IT.LEGGINGS, n: 1 },
+  { pattern: [[L, 0, L], [L, 0, L]], out: IT.BOOTS, n: 1 },
   { shapeless: [BL.LOG], out: BL.PLANKS, n: 4 },
   { pattern: [[P], [P]], out: IT.STICK, n: 4 },
   { pattern: [[P, P], [P, P]], out: BL.CRAFTING_TABLE, n: 1 },

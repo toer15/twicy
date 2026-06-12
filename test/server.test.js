@@ -203,18 +203,84 @@ async function main() {
     c.close();
     await delay(200);
 
-    // delete world
+    // friends: search, request, accept, list
+    const f1 = new Client('f-alice');
+    await f1.connect();
+    f1.send({ t: 'hello', name: 'Alice' });
+    await f1.expect('hello');
+    const f2 = new Client('f-bob');
+    await f2.connect();
+    f2.send({ t: 'hello', name: 'Bob' });
+    await f2.expect('hello');
+    f1.send({ t: 'fsearch', q: 'bo' });
+    const search = await f1.expect('fsearch');
+    assert.ok(search.list.some(u => u.name === 'Bob'), 'search finds Bob');
+    f1.send({ t: 'frequest', to: 'Bob' });
+    const bobList = await f2.expect('flist');
+    assert.deepStrictEqual(bobList.requests, ['Alice'], 'Bob got the friend request');
+    f2.send({ t: 'faccept', from: 'Alice' });
+    const bobList2 = await f2.expect('flist', l => l.friends.length > 0);
+    assert.strictEqual(bobList2.friends[0].name, 'Alice', 'Bob has Alice as friend');
+    assert.strictEqual(bobList2.friends[0].online, true, 'Alice shows online');
+    console.log('✓ friends: search, request, accept, presence');
+
+    // private world + invite flow
+    f1.send({ t: 'create', name: 'Secret Base', seed: 's', mode: 'creative', visibility: 'private', mobs: false });
+    const secret = await f1.expect('created');
+    f2.send({ t: 'worlds' });
+    const bobWorlds = await f2.expect('worlds');
+    assert.ok(!bobWorlds.list.some(w => w.id === secret.id), 'private world hidden from non-friends');
+    f2.send({ t: 'join', id: secret.id });
+    const denied = await f2.expect('err');
+    assert.ok(/private/.test(denied.msg), 'join denied: ' + denied.msg);
+    f1.send({ t: 'join', id: secret.id });
+    const ownWorld = await f1.expect('world');
+    assert.strictEqual(ownWorld.sim, true, 'first joiner is the mob sim host');
+    assert.strictEqual(ownWorld.mobs, false, 'mobs setting persisted');
+    f1.send({ t: 'invite', to: 'Bob' });
+    const invited = await f2.expect('invited');
+    assert.strictEqual(invited.from, 'Alice');
+    assert.strictEqual(invited.worldId, secret.id);
+    f2.send({ t: 'join', id: secret.id });
+    const joined = await f2.expect('world');
+    assert.strictEqual(joined.sim, false, 'second joiner is not the sim host');
+    console.log('✓ private worlds: hidden, join denied, invite grants access');
+
+    // mob relay: sim host broadcast reaches the other player; hits route back
+    f1.send({ t: 'mobs', list: [[1, 0, 5, 40, 5, 0, 20, 0]] });
+    const mobsMsg = await f2.expect('mobs');
+    assert.strictEqual(mobsMsg.list.length, 1, 'mob batch relayed');
+    f2.send({ t: 'mobhit', id: 1, dmg: 4, kx: 1, kz: 0 });
+    const hit = await f1.expect('mobhit');
+    assert.strictEqual(hit.dmg, 4, 'mob hit routed to sim host');
+    f1.send({ t: 'setMany', blocks: [[1, 30, 1, 0], [2, 30, 1, 0]], boom: { x: 1, y: 30, z: 1, r: 2 } });
+    const boom = await f2.expect('setMany');
+    assert.strictEqual(boom.blocks.length, 2, 'explosion blocks relayed');
+    // sim handover when the host leaves
+    f1.send({ t: 'leave' });
+    const simMsg = await f2.expect('sim');
+    assert.strictEqual(simMsg.you, true, 'sim host handed over on leave');
+    f2.send({ t: 'leave' });
+    console.log('✓ mob sync relays + sim host handover');
+
+    // delete world: only the owner may delete
     const d = new Client('admin');
     await d.connect();
     d.send({ t: 'hello', name: 'Admin' });
     await d.expect('hello');
     d.send({ t: 'delete', id: created.id });
-    await d.expect('deleted');
-    d.send({ t: 'worlds' });
-    const after = await d.expect('worlds');
-    assert.strictEqual(after.list.length, 0, 'world deleted');
+    const delErr = await d.expect('err');
+    assert.ok(/owner/.test(delErr.msg), 'non-owner delete rejected');
     d.close();
-    console.log('✓ rejoin restores player data; delete world works');
+    f1.send({ t: 'delete', id: created.id });
+    await f1.expect('deleted');
+    f1.send({ t: 'delete', id: secret.id });
+    await f1.expect('deleted');
+    f1.send({ t: 'worlds' });
+    const after = await f1.expect('worlds');
+    assert.strictEqual(after.list.length, 0, 'worlds deleted by owner');
+    f1.close(); f2.close();
+    console.log('✓ rejoin restores player data; owner-only delete works');
 
     a.close();
     console.log('\nAll server integration tests passed.');

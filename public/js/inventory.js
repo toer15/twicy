@@ -7,7 +7,25 @@ const STACK_MAX = 64; // default for blocks; items can override via stackMax()
 class Inventory {
   constructor() {
     this.slots = new Array(36).fill(null); // {id, count} | null; 0..8 = hotbar
+    this.armor = new Array(4).fill(null);  // helmet, chestplate, leggings, boots
     this.selected = 0;
+  }
+
+  armorPoints() {
+    let p = 0;
+    for (const a of this.armor) if (a && ITEMS[a.id]) p += ITEMS[a.id].armor || 0;
+    return p;
+  }
+
+  serializeArmor() { return this.armor.map(s => (s ? [s.id, s.count] : 0)); }
+
+  loadArmor(arr) {
+    if (!Array.isArray(arr)) return;
+    for (let i = 0; i < 4; i++) {
+      const v = arr[i];
+      this.armor[i] = Array.isArray(v) && ITEMS[v[0]] && ITEMS[v[0]].armorSlot === i
+        ? { id: v[0], count: 1 } : null;
+    }
   }
 
   getSelected() { return this.slots[this.selected]; }
@@ -113,6 +131,8 @@ class InventoryUI {
     this.openState = true;
     this.kind = kind;
     this.craftSize = kind === 'table' ? 3 : 2;
+    // the mouse must be free while a UI is open
+    if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
     this._build();
     this.root.classList.remove('hidden');
   }
@@ -167,6 +187,34 @@ class InventoryUI {
       sep.textContent = 'Hotbar & storage';
       panel.appendChild(sep);
     } else {
+      if (this.kind === 'player') {
+        // character pane: skin preview + armor slots
+        const cp = document.createElement('div');
+        cp.className = 'char-pane';
+        const armorCol = document.createElement('div');
+        armorCol.className = 'armor-col';
+        const names = ['Helmet', 'Chestplate', 'Leggings', 'Boots'];
+        for (let i = 0; i < 4; i++) {
+          const a = this.inv.armor[i];
+          const el = this._slotEl(a, e => this._armorClick(i, e), a ? thingName(a.id) : names[i]);
+          el.classList.add('armor-slot');
+          if (!a) el.dataset.ph = ['🪖', '👕', '👖', '🥾'][i];
+          armorCol.appendChild(el);
+        }
+        cp.appendChild(armorCol);
+        const img = document.createElement('img');
+        img.className = 'char-preview';
+        img.src = skinPreviewURL(typeof App !== 'undefined' ? App.profile.skin : 'explorer', 5);
+        img.draggable = false;
+        cp.appendChild(img);
+        const stats = document.createElement('div');
+        stats.className = 'char-stats';
+        const pts = this.inv.armorPoints();
+        stats.innerHTML = `<b>${escapeHTML(typeof App !== 'undefined' ? App.profile.name : 'Player')}</b><br>` +
+          `Armor: ${'▣'.repeat(pts) || '—'}<br><small>${pts ? Math.round(pts * 4) + '% protection' : 'no protection'}</small>`;
+        cp.appendChild(stats);
+        panel.appendChild(cp);
+      }
       // crafting area: grid -> result
       const area = document.createElement('div');
       area.className = 'craft-area';
@@ -251,12 +299,42 @@ class InventoryUI {
     this._slotClick(this.craft, i, e, false);
   }
 
+  // armor slots only accept the matching piece
+  _armorClick(i, e) {
+    const cur = this.inv.armor[i];
+    if (this.cursor) {
+      const def = ITEMS[this.cursor.id];
+      if (!def || def.armorSlot !== i) return;
+      this.inv.armor[i] = { id: this.cursor.id, count: 1 };
+      this.cursor.count--;
+      if (this.cursor.count <= 0) this.cursor = null;
+      if (cur) {
+        if (!this.cursor) this.cursor = cur;
+        else this.inv.addItem(cur.id, cur.count);
+      }
+      Sfx.equip();
+    } else if (cur) {
+      if (e.shiftKey) this.inv.addItem(cur.id, cur.count);
+      else this.cursor = cur;
+      this.inv.armor[i] = null;
+      Sfx.equip();
+    }
+    this._refresh();
+  }
+
   // shared click logic for a slot array; quickMove toggles hotbar<->main
   _slotClick(slots, i, e, isInv) {
     const s = slots[i];
     if (e.shiftKey && e.button === 0) {
       if (s) {
-        if (!isInv) { // craft grid -> inventory
+        const aSlot = ITEMS[s.id] ? ITEMS[s.id].armorSlot : undefined;
+        if (isInv && aSlot !== undefined && !this.inv.armor[aSlot] && this.kind === 'player') {
+          // shift-click armor to equip it
+          this.inv.armor[aSlot] = { id: s.id, count: 1 };
+          s.count--;
+          if (s.count <= 0) slots[i] = null;
+          Sfx.equip();
+        } else if (!isInv) { // craft grid -> inventory
           const left = this.inv.addItem(s.id, s.count);
           slots[i] = left > 0 ? { id: s.id, count: left } : null;
         } else {

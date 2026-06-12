@@ -28,7 +28,11 @@ function buildPlayerMeshes(renderer) {
 function playerPartMatrices(pose) {
   const S = MODEL_SCALE;
   const px = v => v * S;
-  const root = M4.mul(M4.translate(pose.pos[0], pose.pos[1], pose.pos[2]), M4.rotY(pose.bodyYaw));
+  let root = M4.mul(M4.translate(pose.pos[0], pose.pos[1], pose.pos[2]), M4.rotY(pose.bodyYaw));
+  if (pose.deathT > 0) {
+    const fall = Math.min(1, pose.deathT / 0.5) * (Math.PI / 2);
+    root = M4.mul(root, M4.mul(M4.translate(0, px(2), 0), M4.mul(M4.rotZ(fall), M4.translate(0, -px(2), 0))));
+  }
   const parts = {};
   const at = (pivot, rot, offset) =>
     M4.mul(root, M4.mul(M4.translate(px(pivot[0]), px(pivot[1]), px(pivot[2])),
@@ -59,10 +63,17 @@ function playerPartMatrices(pose) {
   parts.head = at(neck, headRot, [-4, sneak ? -1 : 0, -4]);
   parts.body = at([0, 12, 0], M4.rotX(lean), [-4, 0, -2]);
   const armLean = sneak ? -0.45 : 0;
-  parts.armR = at([-6, shoulderY, shoulderZ],
-    M4.mul(M4.rotY(-punchY), M4.mul(M4.rotX(-armSwing - punchX + armLean), M4.rotZ(idle + 0.05))), [-2, -10, -2]);
-  parts.armL = at([6, shoulderY, shoulderZ],
-    M4.mul(M4.rotX(armSwing + armLean * 0.7), M4.rotZ(-idle - 0.05)), [-2, -10, -2]);
+  if (pose.zombieArms) {
+    // both arms stretched out forward, swaying slightly
+    const sway = Math.sin((pose.time || 0) * 2.2) * 0.07 + Math.cos(wp) * 0.12 * amp;
+    parts.armR = at([-6, shoulderY, shoulderZ], M4.rotX(-1.5 - sway), [-2, -10, -2]);
+    parts.armL = at([6, shoulderY, shoulderZ], M4.rotX(-1.5 + sway), [-2, -10, -2]);
+  } else {
+    parts.armR = at([-6, shoulderY, shoulderZ],
+      M4.mul(M4.rotY(-punchY), M4.mul(M4.rotX(-armSwing - punchX + armLean), M4.rotZ(idle + 0.05))), [-2, -10, -2]);
+    parts.armL = at([6, shoulderY, shoulderZ],
+      M4.mul(M4.rotX(armSwing + armLean * 0.7), M4.rotZ(-idle - 0.05)), [-2, -10, -2]);
+  }
   parts.legR = at([-2, 12, 0], M4.rotX(legSwing), [-2, -12, -2]);
   parts.legL = at([2, 12, 0], M4.rotX(-legSwing), [-2, -12, -2]);
   return parts;

@@ -61,9 +61,20 @@ const HUD = {
     this.els.hearts.classList.toggle('hidden', !v);
   },
 
-  setHealth(h) {
+  setHealth(h, armorPts = 0) {
     const el = this.els.hearts;
     el.innerHTML = '';
+    if (armorPts > 0) {
+      const row = document.createElement('div');
+      row.className = 'armor-row';
+      for (let i = 0; i < armorPts && i < 10; i++) {
+        const s = document.createElement('span');
+        s.className = 'armor-pip';
+        s.textContent = '▣';
+        row.appendChild(s);
+      }
+      el.appendChild(row);
+    }
     for (let i = 0; i < 10; i++) {
       const s = document.createElement('span');
       const v = h - i * 2;

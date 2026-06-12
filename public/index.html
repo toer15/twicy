@@ -41,21 +41,35 @@
 
 <!-- pause -->
 <div id="pause" class="overlay hidden">
-  <div class="panel narrow center">
+  <div class="panel pause-panel center">
     <h2>Game Paused</h2>
     <button class="btn big" id="pause-resume">Back to Game</button>
-    <div class="options">
-      <label>Render distance <span id="opt-dist-val"></span>
-        <input type="range" id="opt-dist" min="3" max="10" step="1"></label>
-      <label>Field of view <span id="opt-fov-val"></span>
-        <input type="range" id="opt-fov" min="50" max="110" step="1"></label>
-      <label>Mouse sensitivity <span id="opt-sens-val"></span>
-        <input type="range" id="opt-sens" min="0.2" max="3" step="0.1"></label>
-      <label class="check"><input type="checkbox" id="opt-bob"> View bobbing</label>
-      <label class="check"><input type="checkbox" id="opt-sound"> Sound</label>
+    <div class="row">
+      <button class="btn" id="pause-settings">Settings…</button>
+      <button class="btn" id="pause-quit">Save &amp; Quit to Title</button>
     </div>
-    <button class="btn" id="pause-quit">Save &amp; Quit to Title</button>
+    <div id="pause-host" class="host-box hidden">
+      <h3>🖧 Multiplayer</h3>
+      <div id="pause-host-info"></div>
+      <div id="pause-vis-row" class="row hidden">
+        <button class="btn sm" id="pause-vis">World: public</button>
+      </div>
+    </div>
+    <div id="pause-invite" class="host-box hidden">
+      <h3>✉ Invite friends</h3>
+      <div id="pause-invite-list" class="invite-list"></div>
+    </div>
   </div>
+</div>
+
+<!-- settings (shared by title screen and pause) -->
+<div id="settings-screen" class="overlay hidden"></div>
+
+<!-- invite toast -->
+<div id="invite-toast" class="hidden">
+  <span id="invite-text"></span>
+  <button class="btn primary sm" id="invite-join">Join</button>
+  <button class="btn sm" id="invite-dismiss">✕</button>
 </div>
 
 <!-- death screen -->
@@ -71,10 +85,12 @@
 <!-- menus -->
 <div id="menu"></div>
 <div id="toast"></div>
-<div id="loading" class="overlay hidden">
-  <div class="panel narrow center">
-    <div class="loading-text">Loading…</div>
-    <div class="loading-bar"><div></div></div>
+<div id="loading" class="overlay mc-loading hidden">
+  <div class="mc-loading-inner">
+    <div class="mc-loading-title">TWICYCRAFT</div>
+    <div class="loading-text">Building terrain…</div>
+    <div class="loading-bar"><div id="loading-fill"></div></div>
+    <div class="loading-tip" id="loading-tip"></div>
   </div>
 </div>
 
@@ -85,11 +101,13 @@
 <script src="js/blocks.js"></script>
 <script src="js/items.js"></script>
 <script src="js/skins.js"></script>
+<script src="js/weather.js"></script>
 <script src="js/worldgen.js"></script>
 <script src="js/world.js"></script>
 <script src="js/mesher.js"></script>
 <script src="js/renderer.js"></script>
 <script src="js/entities.js"></script>
+<script src="js/mobs.js"></script>
 <script src="js/particles.js"></script>
 <script src="js/sound.js"></script>
 <script src="js/localserver.js"></script>

@@ -30,13 +30,35 @@ WebSocket implementation.
   cacti, lakes & beaches, bedrock floor
 - **Character skins** — 8 procedurally painted skins with a live preview picker
 - **Multiplayer** — shared worlds over WebSockets: see other players move,
-  swing, and build in real time; chat with commands (`/gamemode`, `/time`,
-  `/players`); player list on Tab
+  swing, sneak and build in real time; chat with commands (`/gamemode`,
+  `/time`, `/players`); player list on Tab; the pause menu shows the host's
+  LAN address so friends know where to join
+- **Public & private worlds** — choose at creation (or toggle from the pause
+  menu as the owner); public worlds appear in a shared list on the start
+  menu, private ones are visible only to you and invited friends
+- **Friends & invites** — search players by name, send/accept friend
+  requests, see who's online and what they're playing, and invite friends to
+  your world straight from the Esc menu (works for private worlds)
+- **Mobs** — per-world toggle at creation: zombies, spiders and creepers come
+  out at night (and lurk in caves), pigs/sheep/cows roam by day; hostile mobs
+  walk toward you when you get close and fight back when attacked; creepers
+  hiss, flash, and explode
+- **Combat** — swords (wood/stone) deal real damage with knockback, hurt
+  flashes and Minecraft death animations; mobs drop loot for their killer
+  (cows & zombies drop leather, sheep drop wool)
+- **Armor** — craft a full leather set, equip it in the inventory's character
+  pane (with your skin preview) for up to 28% damage reduction, shown as an
+  armor bar over your hearts
+- **Weather** — a deterministic rain/snow cycle every player sees identically,
+  with thunder, lightning flashes, rain ambience, and grey stormy skies
 - **Minecraft-style animations** — walking arm/leg swing, punch/swing arm,
   first-person arm & held block with view bobbing, crack overlay stages,
   day/night cycle with sun, moon, stars and drifting clouds, third-person view (F5)
-- **Main menu** — world list with create/delete, Survival/Creative selection,
-  seed input, skin & profile editor, controls help
+- **Main menu** — world list (yours + public worlds), Survival/Creative,
+  public/private and mobs on/off selection at creation, seed input, skins,
+  friends, help — plus a Minecraft-style loading screen that drops you
+  straight into the game, and a full settings menu (render distance, FOV,
+  particles, clouds, view bob, fullscreen, invert Y, sensitivity, volume)
 - **Save / load worlds** — the server persists every world (terrain edits, time
   of day, and per-player position/inventory/health/gamemode) to `worlds/*.json`;
   in offline mode the same data is saved to your browser's localStorage —
