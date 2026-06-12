@@ -27,7 +27,7 @@ const ctx = vm.createContext({
 });
 
 // only logic files — no DOM/WebGL needed for these
-for (const f of ['config.js', 'math.js', 'noise.js', 'textures.js', 'blocks.js', 'worldgen.js', 'world.js', 'mesher.js', 'inventory.js', 'sound.js', 'player.js', 'entities.js', 'localserver.js']) {
+for (const f of ['config.js', 'math.js', 'noise.js', 'textures.js', 'blocks.js', 'items.js', 'worldgen.js', 'world.js', 'mesher.js', 'inventory.js', 'sound.js', 'player.js', 'entities.js', 'particles.js', 'localserver.js']) {
   const src = fs.readFileSync(path.join(PUB, f), 'utf8');
   vm.runInContext(src, ctx, { filename: f });
 }
@@ -184,6 +184,98 @@ run(`
 `);
 assert.strictEqual(run('_anim'), true, 'player part matrices are finite 4x4s');
 console.log('✓ player model animation matrices');
+
+// ---- crafting recipes ----
+run(`
+  const g2 = size => new Array(size * size).fill(0);
+  // 1 log anywhere -> 4 planks (shapeless)
+  let g = g2(2); g[3] = BL.LOG;
+  const r1 = matchRecipe(g, 2);
+  // 2 planks vertical -> sticks
+  g = g2(2); g[0] = BL.PLANKS; g[2] = BL.PLANKS;
+  const r2 = matchRecipe(g, 2);
+  // 2x2 planks -> crafting table
+  g = g2(2).fill(BL.PLANKS);
+  const r3 = matchRecipe(g, 2);
+  // wooden pickaxe in 3x3 (planks across the top, sticks down the middle)
+  g = g2(3);
+  g[0] = BL.PLANKS; g[1] = BL.PLANKS; g[2] = BL.PLANKS; g[4] = IT.STICK; g[7] = IT.STICK;
+  const r4 = matchRecipe(g, 3);
+  // mirrored axe must also match
+  g = g2(3);
+  g[0] = BL.PLANKS; g[1] = BL.PLANKS; g[3] = IT.STICK; g[4] = BL.PLANKS; g[6] = IT.STICK;
+  const r5 = matchRecipe(g, 3);
+  // garbage must NOT match
+  g = g2(3); g[0] = BL.DIRT; g[4] = IT.STICK;
+  const r6 = matchRecipe(g, 3);
+  globalThis._craft = { r1, r2, r3, r4, r5, r6 };
+`);
+const craft = JSON.parse(run('JSON.stringify(_craft)'));
+assert.deepStrictEqual(craft.r1, { id: run('BL.PLANKS'), count: 4 }, 'log -> 4 planks');
+assert.deepStrictEqual(craft.r2, { id: run('IT.STICK'), count: 4 }, '2 planks -> 4 sticks');
+assert.deepStrictEqual(craft.r3, { id: run('BL.CRAFTING_TABLE'), count: 1 }, '4 planks -> crafting table');
+assert.deepStrictEqual(craft.r4, { id: run('IT.PICK_WOOD'), count: 1 }, 'wooden pickaxe recipe');
+assert.deepStrictEqual(craft.r5, { id: run('IT.AXE_WOOD'), count: 1 }, 'mirrored axe recipe');
+assert.strictEqual(craft.r6, null, 'nonsense grid matches nothing');
+console.log('✓ crafting: planks, sticks, table, tools (incl. mirrored shapes)');
+
+// ---- tool break mechanics ----
+run(`
+  globalThis._tools = {
+    stoneHand: breakInfo(BL.STONE, 0),
+    stonePick: breakInfo(BL.STONE, IT.PICK_WOOD),
+    logHand: breakInfo(BL.LOG, 0),
+    logAxe: breakInfo(BL.LOG, IT.AXE_WOOD),
+    dirtShovel: breakInfo(BL.DIRT, IT.SHOVEL_STONE),
+    diamondWoodPick: breakInfo(BL.DIAMOND_ORE, IT.PICK_WOOD),
+    diamondStonePick: breakInfo(BL.DIAMOND_ORE, IT.PICK_STONE),
+    bedrock: breakInfo(BL.BEDROCK, IT.PICK_STONE),
+  };
+`);
+const tools = JSON.parse(run('JSON.stringify(_tools)'));
+assert.strictEqual(tools.stoneHand.drop, 0, 'stone by hand drops nothing');
+assert.ok(tools.stoneHand.seconds > 7, 'stone by hand is very slow');
+assert.strictEqual(tools.stonePick.drop, run('BL.COBBLE'), 'stone + pickaxe drops cobble');
+assert.ok(tools.stonePick.seconds < 1, 'pickaxe mines stone fast');
+assert.ok(tools.logAxe.seconds < tools.logHand.seconds / 2.5, 'axe chops much faster');
+assert.strictEqual(tools.logHand.drop, run('BL.LOG'), 'punching a tree still drops the log');
+assert.ok(tools.dirtShovel.seconds < 0.2, 'shovel digs dirt fast');
+assert.strictEqual(tools.diamondWoodPick.drop, 0, 'diamond ore needs a stone pickaxe');
+assert.strictEqual(tools.diamondStonePick.drop, run('BL.DIAMOND_ORE'), 'stone pickaxe mines diamond');
+assert.strictEqual(tools.bedrock.seconds, null, 'bedrock unbreakable (Infinity serializes to null)');
+console.log('✓ tool mechanics: pickaxe requirement, axe/shovel speed, ore tiers');
+
+// ---- item drops: physics + magnet pickup ----
+run(`
+  const dr = new Drops();
+  const gy4 = w.findGroundY(6, 6);
+  dr.spawn(BL.LOG, 6.5, gy4 + 3, 6.5);
+  let picked = null;
+  // far away: must just fall and land, not be collected
+  for (let i = 0; i < 240; i++) dr.tick(1 / 60, w, [50, 50, 50], id => { picked = id; return true; });
+  const landedY = dr.list.length ? dr.list[0].y : -1;
+  const farOk = picked === null && dr.list.length === 1 && Math.abs(landedY - (gy4 + 1)) < 0.15;
+  // walk close: magnet + pickup
+  for (let i = 0; i < 240 && picked === null; i++) dr.tick(1 / 60, w, [6.5, gy4 + 1, 6.5], id => { picked = id; return true; });
+  globalThis._drops = { farOk, picked, left: dr.list.length, landedY, gy4 };
+`);
+const dropsRes = JSON.parse(run('JSON.stringify(_drops)'));
+assert.ok(dropsRes.farOk, 'drop falls, lands on ground, ignores far players: ' + JSON.stringify(dropsRes));
+assert.strictEqual(dropsRes.picked, run('BL.LOG'), 'nearby player collects the drop');
+assert.strictEqual(dropsRes.left, 0, 'drop entity removed after pickup');
+console.log('✓ item drops: gravity, landing, magnet pickup');
+
+// ---- items respect stack limits ----
+run(`
+  const inv3 = new Inventory();
+  inv3.addItem(IT.PICK_WOOD, 3);
+  globalThis._stk = { a: inv3.slots[0], b: inv3.slots[1], c: inv3.slots[2], max: stackMax(IT.PICK_WOOD) };
+`);
+const stk = JSON.parse(run('JSON.stringify(_stk)'));
+assert.strictEqual(stk.max, 1, 'tools do not stack');
+assert.strictEqual(stk.a.count, 1, 'each tool occupies its own slot');
+assert.strictEqual(stk.c.count, 1, 'third tool in third slot');
+console.log('✓ per-item stack limits (tools = 1)');
 
 // ---- block registry consistency ----
 run(`

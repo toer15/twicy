@@ -23,8 +23,8 @@ function buildPlayerMeshes(renderer) {
   };
 }
 
-// computes part model matrices for a pose
-// pose: {pos:[x,y,z] feet, bodyYaw, headYaw, pitch, walkPhase, walkAmp, swing (0..1 or -1), sneak}
+// computes part model matrices for a pose, using Minecraft's animation curves
+// pose: {pos:[x,y,z] feet, bodyYaw, headYaw, pitch, walkPhase, walkAmp, swing (0..1 or -1), sneak, time}
 function playerPartMatrices(pose) {
   const S = MODEL_SCALE;
   const px = v => v * S;
@@ -34,20 +34,35 @@ function playerPartMatrices(pose) {
     M4.mul(root, M4.mul(M4.translate(px(pivot[0]), px(pivot[1]), px(pivot[2])),
       M4.mul(rot, M4.translate(px(offset[0]), px(offset[1]), px(offset[2])))));
 
-  const wp = pose.walkPhase || 0, amp = pose.walkAmp || 0;
-  const legSwing = Math.sin(wp) * amp * 0.75;
-  let armSwing = Math.sin(wp) * amp * 0.65;
-  const idle = Math.sin((pose.time || 0) * 1.1) * 0.035; // subtle idle arm sway
+  const wp = pose.walkPhase || 0, amp = Math.min(pose.walkAmp || 0, 1.35);
+  // Minecraft: legs cos(t)*1.4*amp, arms opposite at ~0.7 of leg swing
+  const legSwing = Math.cos(wp) * 1.35 * amp;
+  const armSwing = Math.cos(wp + Math.PI) * 0.95 * amp;
+  const idle = Math.sin((pose.time || 0) * 1.05) * 0.04; // idle arm sway (zRot in MC)
 
-  // punch animation overrides the right arm
-  let punch = 0;
-  if (pose.swing >= 0) punch = Math.sin(pose.swing * Math.PI) * 1.5;
+  // punch: MC combines two eased sines on the swing progress
+  let punchX = 0, punchY = 0;
+  if (pose.swing >= 0 && pose.swing <= 1) {
+    const p = pose.swing;
+    punchX = Math.sin(Math.sqrt(p) * Math.PI) * 1.35 + Math.sin(p * Math.PI) * 0.45;
+    punchY = Math.sin(Math.sqrt(p) * Math.PI) * 0.35;
+  }
 
-  const headRot = M4.mul(M4.rotY(pose.headYaw - pose.bodyYaw), M4.rotX(-pose.pitch));
-  parts.head = at([0, 24, 0], headRot, [-4, 0, -4]);
-  parts.body = at([0, 12, 0], M4.ident(), [-4, 0, -2]);
-  parts.armR = at([-6, 22, 0], M4.mul(M4.rotX(-armSwing - punch), M4.rotZ(idle + 0.04)), [-2, -10, -2]);
-  parts.armL = at([6, 22, 0], M4.mul(M4.rotX(armSwing), M4.rotZ(-idle - 0.04)), [-2, -10, -2]);
+  const sneak = !!pose.sneak;
+  const lean = sneak ? -0.5 : 0; // torso pitches forward when sneaking
+  // pivots shift when the torso leans (neck/shoulders follow the hip rotation)
+  const cos = Math.cos(lean), sin = Math.sin(lean);
+  const neck = [0, 12 + 12 * cos, 12 * sin];
+  const shoulderY = 12 + 10 * cos, shoulderZ = 10 * sin;
+
+  const headRot = M4.mul(M4.rotY(pose.headYaw - pose.bodyYaw), M4.rotX(-pose.pitch + (sneak ? -0.2 : 0)));
+  parts.head = at(neck, headRot, [-4, sneak ? -1 : 0, -4]);
+  parts.body = at([0, 12, 0], M4.rotX(lean), [-4, 0, -2]);
+  const armLean = sneak ? -0.45 : 0;
+  parts.armR = at([-6, shoulderY, shoulderZ],
+    M4.mul(M4.rotY(-punchY), M4.mul(M4.rotX(-armSwing - punchX + armLean), M4.rotZ(idle + 0.05))), [-2, -10, -2]);
+  parts.armL = at([6, shoulderY, shoulderZ],
+    M4.mul(M4.rotX(armSwing + armLean * 0.7), M4.rotZ(-idle - 0.05)), [-2, -10, -2]);
   parts.legR = at([-2, 12, 0], M4.rotX(legSwing), [-2, -12, -2]);
   parts.legL = at([2, 12, 0], M4.rotX(-legSwing), [-2, -12, -2]);
   return parts;
@@ -66,7 +81,7 @@ class RemotePlayers {
       pos, target: pos.slice(),
       yaw: st.yaw || 0, pitch: st.pitch || 0,
       targetYaw: st.yaw || 0, targetPitch: st.pitch || 0,
-      bodyYaw: st.yaw || 0,
+      bodyYaw: st.yaw || 0, sneak: !!st.sn,
       walkPhase: 0, walkAmp: 0, speed: 0,
       swingT: -1, lastStateAt: 0, tag: null,
     });
@@ -91,6 +106,7 @@ class RemotePlayers {
     }
     if (msg.yaw !== undefined) rp.targetYaw = msg.yaw;
     if (msg.pitch !== undefined) rp.targetPitch = msg.pitch;
+    rp.sneak = !!msg.sn;
     if (msg.swing) rp.swingT = 0;
   }
 
@@ -105,7 +121,7 @@ class RemotePlayers {
       rp.pitch = lerp(rp.pitch, rp.targetPitch, Math.min(1, dt * 16));
       const moving = rp.speed > 0.3;
       rp.walkAmp = lerp(rp.walkAmp, moving ? Math.min(1.3, rp.speed / 4.3) : 0, Math.min(1, dt * 8));
-      rp.walkPhase += dt * Math.max(rp.speed, moving ? 3 : 0) * 2.1;
+      rp.walkPhase += dt * Math.max(rp.speed, moving ? 3 : 0) * 2.6;
       // body follows movement/look direction with lag
       rp.bodyYaw = lerpAngle(rp.bodyYaw, rp.targetYaw, Math.min(1, dt * (moving ? 10 : 3)));
       if (rp.swingT >= 0) {
@@ -119,7 +135,7 @@ class RemotePlayers {
     for (const rp of this.map.values()) {
       const parts = playerPartMatrices({
         pos: rp.pos, bodyYaw: rp.bodyYaw, headYaw: rp.yaw, pitch: rp.pitch,
-        walkPhase: rp.walkPhase, walkAmp: rp.walkAmp,
+        walkPhase: rp.walkPhase, walkAmp: rp.walkAmp, sneak: rp.sneak,
         swing: rp.swingT >= 0 ? rp.swingT / 0.3 : -1, time,
       });
       const tex = getSkinTex(rp.skin);

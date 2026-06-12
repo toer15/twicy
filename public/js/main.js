@@ -183,14 +183,21 @@ function getSkinTexture(skinId) {
   return tex;
 }
 
-// mesh for the block held in hand (cached per block id)
+// mesh for a held/dropped block or item (cached per id);
+// blocks are cubes, items and cross-plants are flat sprites
 function getHeldMesh(id) {
   let m = App.heldMeshCache.get(id);
   if (!m) {
+    const item = ITEMS[id];
     const def = BLOCKS[id];
-    const verts = def.cross
-      ? makeCubeVerts(1, 1, 0.02, f => (f === 4 || f === 5) ? tileUV(blockTile(id, 0)) : null, 1)
-      : makeCubeVerts(1, 1, 1, f => tileUV(blockTile(id, f)), 1);
+    let verts;
+    if (item) {
+      verts = makeCubeVerts(1, 1, 0.06, f => (f === 4 || f === 5) ? tileUV(item.tile) : null, 1);
+    } else if (def.cross) {
+      verts = makeCubeVerts(1, 1, 0.02, f => (f === 4 || f === 5) ? tileUV(blockTile(id, 0)) : null, 1);
+    } else {
+      verts = makeCubeVerts(1, 1, 1, f => tileUV(blockTile(id, f)), 1);
+    }
     m = App.renderer.makeMesh(verts);
     App.heldMeshCache.set(id, m);
   }
@@ -239,6 +246,8 @@ class Game {
     this.player = new Player(this.world, msg.mode);
     this.inv = new Inventory();
     this.remotes = new RemotePlayers();
+    this.particles = new Particles();
+    this.drops = new Drops();
     for (const p of msg.players || []) this.remotes.add(p);
 
     // restore per-player data saved on the server
@@ -524,7 +533,7 @@ class Game {
   onHotbarChange() {
     HUD.updateHotbar(this.inv);
     const s = this.inv.getSelected();
-    if (s) HUD.showItemName(BLOCKS[s.id].name);
+    if (s) HUD.showItemName(thingName(s.id));
   }
 
   setPaused(p) {
@@ -561,8 +570,12 @@ class Game {
   // ---------- net events ----------
 
   onBlockSet(m) {
+    const old = this.world.getBlock(m.x, m.y, m.z);
     this.world.setBlock(m.x, m.y, m.z, m.id, true);
-    if (m.id === BL.AIR) Sfx.dig(); else Sfx.place();
+    if (m.id === BL.AIR) {
+      Sfx.dig();
+      if (old !== BL.AIR) this.particles.burst(m.x, m.y, m.z, old, 10);
+    } else Sfx.place();
     // cancel local breaking if someone else broke it
     if (this.breaking && this.breaking.x === m.x && this.breaking.y === m.y && this.breaking.z === m.z) {
       this.breaking = null;
@@ -605,6 +618,11 @@ class Game {
     }
   }
 
+  heldItemId() {
+    const s = this.inv.getSelected();
+    return s ? s.id : 0;
+  }
+
   breakBlockAt(x, y, z) {
     const id = this.world.getBlock(x, y, z);
     if (id === BL.AIR) return;
@@ -613,20 +631,22 @@ class Game {
     this.world.setBlock(x, y, z, BL.AIR, true);
     App.net.send({ t: 'set', x, y, z, id: BL.AIR });
     Sfx.breakBlock();
+    this.particles.burst(x, y, z, id);
     if (this.player.mode === 'survival') {
-      const drop = blockDrop(id);
-      if (drop) {
-        this.inv.addItem(drop, 1);
-        this.invDirty = true;
-        HUD.updateHotbar(this.inv);
-        Sfx.pop();
-      }
+      // tool rules decide the drop (e.g. stone needs a pickaxe)
+      const info = breakInfo(id, this.heldItemId());
+      if (info.drop) this.drops.spawn(info.drop, x + 0.5, y + 0.4, z + 0.5);
     }
     // breaking the support under a cross plant pops the plant too
     const above = this.world.getBlock(x, y + 1, z);
     if (BLOCKS[above] && BLOCKS[above].cross) {
       this.world.setBlock(x, y + 1, z, BL.AIR, true);
       App.net.send({ t: 'set', x, y: y + 1, z, id: BL.AIR });
+      this.particles.burst(x, y + 1, z, above, 8);
+      if (this.player.mode === 'survival') {
+        const drop = blockDrop(above);
+        if (drop) this.drops.spawn(drop, x + 0.5, y + 1.3, z + 0.5);
+      }
     }
   }
 
@@ -647,14 +667,19 @@ class Game {
     const t = this.rayTarget();
     if (!t) { this.breaking = null; return; }
     const id = this.world.getBlock(t.x, t.y, t.z);
-    const def = BLOCKS[id];
-    if (def.hardness < 0) { this.breaking = null; return; }
+    const info = breakInfo(id, this.heldItemId());
+    if (!isFinite(info.seconds)) { this.breaking = null; return; }
     if (!this.breaking || this.breaking.x !== t.x || this.breaking.y !== t.y || this.breaking.z !== t.z) {
-      this.breaking = { x: t.x, y: t.y, z: t.z, progress: 0, hardness: def.hardness };
+      this.breaking = { x: t.x, y: t.y, z: t.z, progress: 0 };
     }
-    this.breaking.progress += dt / this.breaking.hardness;
+    this.breaking.progress += dt / info.seconds;
     this._digSfxT = (this._digSfxT || 0) + dt;
-    if (this._digSfxT > 0.25) { this._digSfxT = 0; Sfx.dig(); this.startSwing(); }
+    if (this._digSfxT > 0.25) {
+      this._digSfxT = 0;
+      Sfx.dig();
+      this.startSwing();
+      this.particles.hit(t, id);
+    }
     if (this.breaking.progress >= 1) {
       this.breakBlockAt(t.x, t.y, t.z);
       this.breaking = null;
@@ -663,11 +688,18 @@ class Game {
 
   tryPlace() {
     if (this.player.dead || this.paused) return;
-    const sel = this.inv.getSelected();
-    if (!sel) return;
-    const id = sel.id;
     const t = this.rayTarget();
     if (!t) return;
+    // right-clicking a crafting table opens the 3x3 grid (unless sneaking)
+    if (this.world.getBlock(t.x, t.y, t.z) === BL.CRAFTING_TABLE && !this.player.sneaking) {
+      this.mouse.right = false;
+      document.exitPointerLock();
+      this.invUI.open('table');
+      return;
+    }
+    const sel = this.inv.getSelected();
+    if (!sel || !BLOCKS[sel.id]) return; // tools/sticks can't be placed
+    const id = sel.id;
     const x = t.x + t.face[0], y = t.y + t.face[1], z = t.z + t.face[2];
     if (y < 0 || y >= WORLD_H) return;
     const cur = this.world.getBlock(x, y, z);
@@ -706,7 +738,7 @@ class Game {
     const id = this.world.getBlock(t.x, t.y, t.z);
     if (!id) return;
     if (this.player.mode === 'creative') {
-      this.inv.slots[this.inv.selected] = { id, count: STACK_MAX };
+      this.inv.slots[this.inv.selected] = { id, count: stackMax(id) };
     } else {
       const i = this.inv.findItem(id);
       if (i < 0) return;
@@ -817,8 +849,9 @@ class Game {
       p: [round2(p.pos[0]), round2(p.pos[1]), round2(p.pos[2])],
       yaw: round2(p.yaw), pitch: round2(p.pitch),
     };
+    if (p.sneaking) st.sn = 1;
     if (this.swingFlag) { st.swing = 1; this.swingFlag = false; }
-    const sig = st.p.join(',') + st.yaw + ',' + st.pitch + (st.swing || 0);
+    const sig = st.p.join(',') + st.yaw + ',' + st.pitch + (st.swing || 0) + (st.sn || 0);
     if (sig !== this.lastSent.sig || st.swing) {
       this.lastSent.sig = sig;
       App.net.send(st);
@@ -851,6 +884,9 @@ class Game {
     this._unbindEvents();
     this.setPausedSilent();
     this.remotes.clear();
+    this.drops.clear();
+    this.particles.list = [];
+    if (this.particleMesh) { App.renderer.deleteMesh(this.particleMesh); this.particleMesh = null; }
   }
 
   setPausedSilent() {
@@ -919,6 +955,14 @@ class Game {
       if (this.swingAnim >= 1) this.swingAnim = -1;
     }
     this.remotes.tick(dt, this.time);
+    this.particles.tick(dt, this.world);
+    this.drops.tick(dt, this.world, this.player.dead ? null : this.player.pos, id => {
+      if (this.inv.addItem(id, 1) > 0) return false; // inventory full
+      Sfx.pop();
+      HUD.updateHotbar(this.inv);
+      this.invDirty = true;
+      return true;
+    });
     this.tickChunks();
     this.sendState(dt);
     this.pdataTimer += dt;
@@ -963,10 +1007,26 @@ class Game {
       const hSpeed = Math.hypot(p.vel[0], p.vel[2]);
       const parts = playerPartMatrices({
         pos: p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch,
-        walkPhase: p.bobPhase * 1.15, walkAmp: clamp(hSpeed / 4.3, 0, 1.3),
-        swing: this.swingAnim, time: this.time,
+        walkPhase: p.bobPhase * 1.3, walkAmp: clamp(hSpeed / 4.3, 0, 1.3),
+        swing: this.swingAnim, time: this.time, sneak: p.sneaking,
       });
       for (const name in parts) r.drawBox(App.playerMeshes[name], parts[name], getSkinTexture(App.profile.skin));
+    }
+
+    // item drops + block particles
+    this.drops.draw(r, getHeldMesh, this.time);
+    if (this.particles.list.length) {
+      const fwd = dirFromAngles(cam.yaw, cam.pitch);
+      const right = [Math.cos(cam.yaw), 0, -Math.sin(cam.yaw)];
+      const up = [
+        right[1] * fwd[2] - right[2] * fwd[1],
+        right[2] * fwd[0] - right[0] * fwd[2],
+        right[0] * fwd[1] - right[1] * fwd[0],
+      ];
+      const data = this.particles.buildMesh(right, up);
+      if (!this.particleMesh) this.particleMesh = r.makeMesh(data, 'TRIANGLES', true);
+      else r.updateMesh(this.particleMesh, data);
+      r.drawBox(this.particleMesh, r.IDENT, r.atlasTex, { alphaTest: true });
     }
 
     // selection + crack overlay
@@ -993,25 +1053,40 @@ class Game {
 
   renderFirstPerson(r) {
     r.beginViewSpace();
-    const sw = this.swingAnim >= 0 ? Math.sin(this.swingAnim * Math.PI) : 0;
+    // Minecraft's two eased swing curves: a fast sqrt-eased sweep + a softer sine
+    const p = this.swingAnim >= 0 ? this.swingAnim : 0;
+    const sw1 = Math.sin(p * Math.PI);             // out-and-back
+    const sw2 = Math.sin(Math.sqrt(p) * Math.PI);  // fast strike at the start
     const bob = this.player.bobAmp;
-    const bx = Math.cos(this.player.bobPhase) * 0.012 * bob;
-    const by = -Math.abs(Math.sin(this.player.bobPhase)) * 0.018 * bob;
+    const bx = Math.cos(this.player.bobPhase) * 0.014 * bob;
+    const by = -Math.abs(Math.sin(this.player.bobPhase)) * 0.02 * bob;
     const sel = this.inv.getSelected();
 
-    if (sel) {
-      let m = M4.translate(0.42 + bx - sw * 0.1, -0.54 + by - sw * 0.22, -0.78 + sw * 0.06);
-      m = M4.mul(m, M4.rotY(Math.PI / 4 + 0.15 + sw * 0.5));
-      m = M4.mul(m, M4.rotX(0.1 - sw * 0.9));
+    if (sel && ITEMS[sel.id]) {
+      // tool/stick: flat sprite held diagonally like Minecraft
+      let m = M4.translate(0.46 + bx - sw2 * 0.26, -0.4 + by + sw1 * 0.06 - sw2 * 0.18, -0.68 - sw1 * 0.06);
+      m = M4.mul(m, M4.rotY(0.05 + sw2 * 0.4));
+      m = M4.mul(m, M4.rotX(-0.05 - sw1 * 0.5));
+      m = M4.mul(m, M4.rotZ(-0.75 - sw2 * 0.55));
+      m = M4.mul(m, M4.scale(0.38, 0.38, 0.38));
+      m = M4.mul(m, M4.translate(-0.5, -0.5, 0));
+      r.drawBox(getHeldMesh(sel.id), m, r.atlasTex, { alphaTest: true });
+    } else if (sel) {
+      // held block dips down-left and twists during the swing
+      let m = M4.translate(0.42 + bx - sw2 * 0.22, -0.54 + by - sw2 * 0.3 + sw1 * 0.08, -0.78 - sw1 * 0.08);
+      m = M4.mul(m, M4.rotY(Math.PI / 4 + 0.15 + sw2 * 0.7));
+      m = M4.mul(m, M4.rotX(0.1 - sw1 * 0.85));
       m = M4.mul(m, M4.scale(0.3, 0.3, 0.3));
       r.drawBox(getHeldMesh(sel.id), m, r.atlasTex, { alphaTest: true });
     } else {
-      let m = M4.translate(0.5 + bx - sw * 0.12, -0.62 + by - sw * 0.18, -0.7 + sw * 0.05);
-      m = M4.mul(m, M4.rotX(1.35 - sw * 1.1));
-      m = M4.mul(m, M4.rotY(-0.25 + sw * 0.4));
-      m = M4.mul(m, M4.rotZ(0.1));
-      // armR mesh is built around its pivot offset
-      m = M4.mul(m, M4.translate(-0.1125, -0.6, -0.1125));
+      // bare arm: rises from the bottom-right corner; the punch sweeps it
+      // in toward the crosshair and back (sw2 strikes fast, sw1 returns)
+      let m = M4.translate(0.48 + bx - sw2 * 0.3, -0.26 + by - sw2 * 0.12 + sw1 * 0.06, -0.64 - sw1 * 0.18);
+      m = M4.mul(m, M4.rotY(-0.35 + sw2 * 0.7));
+      m = M4.mul(m, M4.rotX(0.38 + sw1 * 0.9));
+      m = M4.mul(m, M4.rotZ(-0.13 - sw2 * 0.3));
+      // armR mesh hangs down from its top pivot
+      m = M4.mul(m, M4.translate(-0.1125, -0.675, -0.1125));
       r.drawBox(App.playerMeshes.armR, m, getSkinTexture(App.profile.skin));
     }
     r.endViewSpace();

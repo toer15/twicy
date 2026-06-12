@@ -1,7 +1,8 @@
-// Inventory: 9 hotbar + 27 main slots, drag & drop UI, creative palette.
+// Inventory: 9 hotbar + 27 main slots, drag & drop UI, creative palette,
+// and Minecraft-style crafting (2x2 in inventory, 3x3 at a crafting table).
 'use strict';
 
-const STACK_MAX = 64;
+const STACK_MAX = 64; // default for blocks; items can override via stackMax()
 
 class Inventory {
   constructor() {
@@ -12,22 +13,33 @@ class Inventory {
   getSelected() { return this.slots[this.selected]; }
 
   addItem(id, count = 1) {
+    const cap = stackMax(id);
     // stack onto existing first (hotbar first), then empty slots
     for (let i = 0; i < 36 && count > 0; i++) {
       const s = this.slots[i];
-      if (s && s.id === id && s.count < STACK_MAX) {
-        const add = Math.min(count, STACK_MAX - s.count);
+      if (s && s.id === id && s.count < cap) {
+        const add = Math.min(count, cap - s.count);
         s.count += add; count -= add;
       }
     }
     for (let i = 0; i < 36 && count > 0; i++) {
       if (!this.slots[i]) {
-        const add = Math.min(count, STACK_MAX);
+        const add = Math.min(count, cap);
         this.slots[i] = { id, count: add };
         count -= add;
       }
     }
     return count; // leftover that didn't fit
+  }
+
+  canFit(id, count = 1) {
+    const cap = stackMax(id);
+    for (let i = 0; i < 36 && count > 0; i++) {
+      const s = this.slots[i];
+      if (!s) count -= cap;
+      else if (s.id === id) count -= (cap - s.count);
+    }
+    return count <= 0;
   }
 
   consumeSelected() {
@@ -49,24 +61,20 @@ class Inventory {
     if (!Array.isArray(arr)) return;
     for (let i = 0; i < 36; i++) {
       const v = arr[i];
-      this.slots[i] = Array.isArray(v) && BLOCKS[v[0]] ? { id: v[0], count: clamp(v[1] | 0, 1, STACK_MAX) } : null;
+      this.slots[i] = Array.isArray(v) && isThing(v[0])
+        ? { id: v[0], count: clamp(v[1] | 0, 1, stackMax(v[0])) }
+        : null;
     }
-  }
-
-  giveStarterKit() {
-    this.addItem(BL.PLANKS, 32);
-    this.addItem(BL.COBBLE, 32);
-    this.addItem(BL.GLASS, 16);
   }
 }
 
-// ---- icons ----
+// ---- icons (blocks use their side tile, items their sprite tile) ----
 let _iconAtlas = null;
 const _iconCache = new Map();
 function blockIconURL(id) {
   if (_iconCache.has(id)) return _iconCache.get(id);
   if (!_iconAtlas) _iconAtlas = buildAtlas();
-  const tile = blockTile(id, 4);
+  const tile = ITEMS[id] ? ITEMS[id].tile : blockTile(id, 4);
   const cv = document.createElement('canvas');
   cv.width = cv.height = 32;
   const ctx = cv.getContext('2d');
@@ -84,8 +92,11 @@ class InventoryUI {
     this.inv = inv;
     this.onChange = onChange;
     this.creative = false;
-    this.cursor = null; // {id, count} being dragged
+    this.cursor = null;        // {id, count} being dragged
     this.openState = false;
+    this.kind = 'player';      // 'player' (2x2 craft) | 'table' (3x3 craft)
+    this.craftSize = 2;
+    this.craft = new Array(9).fill(null);
     this.root = document.getElementById('inv-screen');
     this.cursorEl = document.getElementById('inv-cursor');
     document.addEventListener('mousemove', e => {
@@ -98,15 +109,22 @@ class InventoryUI {
 
   setCreative(creative) { this.creative = creative; }
 
-  open() {
+  open(kind = 'player') {
     this.openState = true;
+    this.kind = kind;
+    this.craftSize = kind === 'table' ? 3 : 2;
     this._build();
     this.root.classList.remove('hidden');
   }
 
   close() {
     this.openState = false;
-    // return cursor stack to inventory (survival keeps items)
+    // return whatever is left on the crafting grid + cursor to the inventory
+    for (let i = 0; i < 9; i++) {
+      const c = this.craft[i];
+      if (c) this.inv.addItem(c.id, c.count);
+      this.craft[i] = null;
+    }
     if (this.cursor && !this.creative) this.inv.addItem(this.cursor.id, this.cursor.count);
     this.cursor = null;
     this._renderCursor();
@@ -114,26 +132,63 @@ class InventoryUI {
     this.onChange();
   }
 
-  toggle() { this.openState ? this.close() : this.open(); }
+  toggle(kind) { this.openState ? this.close() : this.open(kind); }
+
+  _result() {
+    const size = this.craftSize;
+    const grid = [];
+    for (let y = 0; y < size; y++)
+      for (let x = 0; x < size; x++) {
+        const c = this.craft[y * 3 + x];
+        grid.push(c ? c.id : 0);
+      }
+    return matchRecipe(grid, size);
+  }
 
   _build() {
     const r = this.root;
     r.innerHTML = '';
     const panel = document.createElement('div');
     panel.className = 'panel inv-panel';
-    panel.innerHTML = `<h3>${this.creative ? 'Creative Inventory' : 'Inventory'}</h3>`;
+    const showPalette = this.creative && this.kind === 'player';
+    const title = this.kind === 'table' ? 'Crafting Table'
+      : showPalette ? 'Creative Inventory' : 'Inventory & Crafting';
+    panel.innerHTML = `<h3>${title}</h3>`;
 
-    if (this.creative) {
+    if (showPalette) {
       const pal = document.createElement('div');
       pal.className = 'inv-grid palette';
-      for (const id of CREATIVE_ITEMS) {
-        pal.appendChild(this._slotEl({ id, count: 0 }, () => this._paletteClick(id), BLOCKS[id].name));
+      for (const id of CREATIVE_ALL) {
+        pal.appendChild(this._slotEl({ id, count: 0 }, () => this._paletteClick(id), thingName(id)));
       }
       panel.appendChild(pal);
       const sep = document.createElement('div');
       sep.className = 'inv-sep';
       sep.textContent = 'Hotbar & storage';
       panel.appendChild(sep);
+    } else {
+      // crafting area: grid -> result
+      const area = document.createElement('div');
+      area.className = 'craft-area';
+      const grid = document.createElement('div');
+      grid.className = 'inv-grid craft-grid size' + this.craftSize;
+      for (let y = 0; y < this.craftSize; y++)
+        for (let x = 0; x < this.craftSize; x++) {
+          const i = y * 3 + x;
+          const c = this.craft[i];
+          grid.appendChild(this._slotEl(c, e => this._craftClick(i, e), c ? thingName(c.id) : ''));
+        }
+      area.appendChild(grid);
+      const arrow = document.createElement('div');
+      arrow.className = 'craft-arrow';
+      arrow.textContent = '➜';
+      area.appendChild(arrow);
+      const res = this._result();
+      const resEl = this._slotEl(res, e => this._resultClick(e), res ? thingName(res.id) : '');
+      resEl.classList.add('craft-result');
+      if (res) resEl.querySelector('img').title = thingName(res.id);
+      area.appendChild(resEl);
+      panel.appendChild(area);
     }
 
     const main = document.createElement('div');
@@ -148,9 +203,11 @@ class InventoryUI {
 
     const hint = document.createElement('div');
     hint.className = 'inv-hint';
-    hint.textContent = this.creative
+    hint.textContent = showPalette
       ? 'Click palette: grab a stack • click with item on palette: discard • right-click: place one'
-      : 'Click: pick/place • right-click: split/place one • shift-click: quick move';
+      : this.kind === 'table'
+        ? '3x3 crafting — try tools: planks/cobble on top, sticks below • shift-click result: craft all'
+        : 'Craft: log ➜ planks ➜ sticks & crafting table • shift-click: quick move • right-click: split';
     panel.appendChild(hint);
     r.appendChild(panel);
   }
@@ -178,37 +235,46 @@ class InventoryUI {
 
   _invSlotEl(i) {
     const s = this.inv.slots[i];
-    return this._slotEl(s, e => this._slotClick(i, e), s ? BLOCKS[s.id].name : '');
+    return this._slotEl(s, e => this._slotClick(this.inv.slots, i, e, true), s ? thingName(s.id) : '');
   }
 
   _paletteClick(id) {
     Sfx.click();
-    if (!this.cursor) this.cursor = { id, count: STACK_MAX };
-    else if (this.cursor.id === id) this.cursor.count = STACK_MAX;
+    if (!this.cursor) this.cursor = { id, count: stackMax(id) };
+    else if (this.cursor.id === id) this.cursor.count = stackMax(id);
     else this.cursor = null; // acts as trash in creative
     this._refresh();
   }
 
-  _slotClick(i, e) {
+  _craftClick(i, e) {
     Sfx.click();
-    const slots = this.inv.slots;
+    this._slotClick(this.craft, i, e, false);
+  }
+
+  // shared click logic for a slot array; quickMove toggles hotbar<->main
+  _slotClick(slots, i, e, isInv) {
     const s = slots[i];
     if (e.shiftKey && e.button === 0) {
       if (s) {
-        // quick-move between hotbar and main storage
-        const [from, to] = i < 9 ? [i, [9, 36]] : [i, [0, 9]];
-        let rest = s.count;
-        for (let j = to[0]; j < to[1] && rest > 0; j++) {
-          const t = slots[j];
-          if (t && t.id === s.id && t.count < STACK_MAX) {
-            const add = Math.min(rest, STACK_MAX - t.count);
-            t.count += add; rest -= add;
+        if (!isInv) { // craft grid -> inventory
+          const left = this.inv.addItem(s.id, s.count);
+          slots[i] = left > 0 ? { id: s.id, count: left } : null;
+        } else {
+          const [from, to] = i < 9 ? [i, [9, 36]] : [i, [0, 9]];
+          let rest = s.count;
+          const cap = stackMax(s.id);
+          for (let j = to[0]; j < to[1] && rest > 0; j++) {
+            const t = slots[j];
+            if (t && t.id === s.id && t.count < cap) {
+              const add = Math.min(rest, cap - t.count);
+              t.count += add; rest -= add;
+            }
           }
+          for (let j = to[0]; j < to[1] && rest > 0; j++) {
+            if (!slots[j]) { slots[j] = { id: s.id, count: rest }; rest = 0; }
+          }
+          slots[from] = rest > 0 ? { id: s.id, count: rest } : null;
         }
-        for (let j = to[0]; j < to[1] && rest > 0; j++) {
-          if (!slots[j]) { slots[j] = { id: s.id, count: rest }; rest = 0; }
-        }
-        slots[from] = rest > 0 ? { id: s.id, count: rest } : null;
       }
     } else if (e.button === 2) {
       if (!this.cursor && s) {
@@ -217,8 +283,9 @@ class InventoryUI {
         s.count -= half;
         if (s.count <= 0) slots[i] = null;
       } else if (this.cursor) {
+        const cap = stackMax(this.cursor.id);
         if (!s) { slots[i] = { id: this.cursor.id, count: 1 }; this.cursor.count--; }
-        else if (s.id === this.cursor.id && s.count < STACK_MAX) { s.count++; this.cursor.count--; }
+        else if (s.id === this.cursor.id && s.count < cap) { s.count++; this.cursor.count--; }
         if (this.cursor.count <= 0) this.cursor = null;
       }
     } else {
@@ -226,12 +293,48 @@ class InventoryUI {
       else if (this.cursor && !s) { slots[i] = this.cursor; this.cursor = null; }
       else if (this.cursor && s) {
         if (s.id === this.cursor.id) {
-          const add = Math.min(this.cursor.count, STACK_MAX - s.count);
+          const add = Math.min(this.cursor.count, stackMax(s.id) - s.count);
           s.count += add; this.cursor.count -= add;
           if (this.cursor.count <= 0) this.cursor = null;
         } else { slots[i] = this.cursor; this.cursor = s; }
       }
     }
+    Sfx.click();
+    this._refresh();
+  }
+
+  _consumeCraft() {
+    for (let y = 0; y < this.craftSize; y++)
+      for (let x = 0; x < this.craftSize; x++) {
+        const i = y * 3 + x;
+        const c = this.craft[i];
+        if (c) {
+          c.count--;
+          if (c.count <= 0) this.craft[i] = null;
+        }
+      }
+  }
+
+  _resultClick(e) {
+    const res = this._result();
+    if (!res) return;
+    if (e.shiftKey) {
+      // craft as many as fit in the inventory
+      let guard = 0;
+      while (guard++ < 64) {
+        const r = this._result();
+        if (!r || !this.inv.canFit(r.id, r.count)) break;
+        this.inv.addItem(r.id, r.count);
+        this._consumeCraft();
+      }
+    } else {
+      const cap = stackMax(res.id);
+      if (!this.cursor) this.cursor = { id: res.id, count: res.count };
+      else if (this.cursor.id === res.id && this.cursor.count + res.count <= cap) this.cursor.count += res.count;
+      else return;
+      this._consumeCraft();
+    }
+    Sfx.pop();
     this._refresh();
   }
 

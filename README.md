@@ -10,8 +10,14 @@ WebSocket implementation.
 ## Features
 
 - **Survival mode** — health, fall damage, drowning (air bubbles), progressive
-  block breaking with crack animations, mined blocks drop into your inventory,
-  slow regeneration, death & respawn screen
+  block breaking with crack animations and particles, blocks pop out as
+  spinning item drops you walk over to collect, slow regeneration, death &
+  respawn screen
+- **Crafting & tools** — punch a tree for logs, craft planks → sticks → a
+  crafting table (2x2 grid in your inventory, right-click the table for 3x3):
+  wooden/stone pickaxes, axes and shovels. Tools matter like in Minecraft:
+  axes chop wood faster, shovels dig faster, and stone-class blocks require a
+  pickaxe to drop anything (better ores need a stone pickaxe)
 - **Creative mode** — flight (double-tap Space), instant breaking, unlimited
   blocks from the creative palette
 - **Inventory system** — 9-slot hotbar + 27 storage slots, drag & drop,
@@ -56,6 +62,17 @@ worlds saved in your browser.
 `.github/workflows/pages.yml` tests and deploys every push automatically
 (the deploy step fails with "Resource not accessible by integration" until
 that toggle is set, because workflow tokens may not create the Pages site).
+
+### Linux (Bazzite, SteamOS, Fedora, Ubuntu, …)
+
+```bash
+./play.sh
+```
+
+The launcher starts the multiplayer server if Node.js is installed and opens
+your browser; without Node it opens the offline single-player version
+directly — perfect for immutable distros like Bazzite where nothing needs to
+be installed. (To get Node on Bazzite for LAN multiplayer: `brew install node`.)
 
 **3. The full version (with multiplayer)** — requires Node.js ≥ 18, no
 `npm install` needed:

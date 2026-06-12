@@ -304,8 +304,9 @@ const handlers = {
     if (Array.isArray(m.p) && m.p.length === 3 && m.p.every(v => typeof v === 'number' && isFinite(v))) st.p = m.p;
     if (typeof m.yaw === 'number') st.yaw = m.yaw;
     if (typeof m.pitch === 'number') st.pitch = m.pitch;
+    if (m.sn) st.sn = 1;
     if (m.swing) st.swing = 1;
-    sess.lastState = { p: st.p, yaw: st.yaw, pitch: st.pitch };
+    sess.lastState = { p: st.p, yaw: st.yaw, pitch: st.pitch, sn: st.sn };
     broadcast(w, st, sess.id);
   },
 

@@ -14,6 +14,11 @@ const TILE = {
   GLOWSTONE: 34, BOOKSHELF: 35, PUMPKIN_SIDE: 36, PUMPKIN_TOP: 37,
   CRACK_0: 40, // 40..49 are the 10 break-progress stages
   SUN: 50, MOON: 51,
+  CRAFT_TOP: 52, CRAFT_SIDE: 53,
+  ITEM_STICK: 54,
+  ITEM_PICK_WOOD: 55, ITEM_PICK_STONE: 56,
+  ITEM_AXE_WOOD: 57, ITEM_AXE_STONE: 58,
+  ITEM_SHOVEL_WOOD: 59, ITEM_SHOVEL_STONE: 60,
 };
 
 const ATLAS_TILES = 16;        // tiles per row
@@ -226,6 +231,75 @@ function buildAtlas() {
     }
   }
   function clampPix(v) { return v < 0 ? 0 : v > 15 ? 15 : v; }
+
+  // --- crafting table ---
+  speckle(TILE.CRAFT_TOP, ['#a8824e', '#9d7846', '#b28a55']);
+  {
+    const tx = (TILE.CRAFT_TOP % 16) * 16, ty = Math.floor(TILE.CRAFT_TOP / 16) * 16;
+    ctx.fillStyle = '#6e5230';
+    ctx.fillRect(tx + 1, ty + 1, 14, 1); ctx.fillRect(tx + 1, ty + 14, 14, 1);
+    ctx.fillRect(tx + 1, ty + 1, 1, 14); ctx.fillRect(tx + 14, ty + 1, 1, 14);
+    ctx.fillRect(tx + 7, ty + 2, 2, 12); ctx.fillRect(tx + 2, ty + 7, 12, 2);
+    ctx.fillStyle = '#c9a86a';
+    ctx.fillRect(tx + 7, ty + 7, 2, 2);
+  }
+  speckle(TILE.CRAFT_SIDE, ['#a8824e', '#9d7846', '#b28a55']);
+  {
+    const tx = (TILE.CRAFT_SIDE % 16) * 16, ty = Math.floor(TILE.CRAFT_SIDE / 16) * 16;
+    ctx.fillStyle = '#6e5230';
+    ctx.fillRect(tx, ty, 16, 2);
+    // a saw and a hammer silhouette
+    ctx.fillStyle = '#3a3a3a';
+    ctx.fillRect(tx + 2, ty + 5, 5, 2);  ctx.fillRect(tx + 3, ty + 7, 1, 1); ctx.fillRect(tx + 5, ty + 7, 1, 1);
+    ctx.fillRect(tx + 10, ty + 4, 3, 3);
+    ctx.fillStyle = '#7c5c33';
+    ctx.fillRect(tx + 11, ty + 7, 1, 5);
+  }
+
+  // --- item sprites: stick + tools (transparent background) ---
+  const HANDLE = '#8a6244', HANDLE_D = '#6e4f33';
+  // 2px-thick 45° handle running up-right; (x0,y0) = bottom-left start
+  function drawHandle(tile, x0, y0, len) {
+    for (let i = 0; i < len; i++) {
+      px(tile, x0 + i, y0 - i, HANDLE);
+      px(tile, x0 + i + 1, y0 - i, HANDLE_D);
+    }
+  }
+  clearTile(TILE.ITEM_STICK);
+  drawHandle(TILE.ITEM_STICK, 3, 12, 9);
+
+  // solid Minecraft-style heads, drawn from explicit row spans [y, x0, x1]
+  const TOOL_HEADS = {
+    pickaxe: [
+      [1, 5, 10], [2, 3, 5], [2, 10, 12], [3, 2, 3], [3, 12, 13],
+      [4, 2, 2], [4, 13, 14], [5, 1, 2], [5, 13, 14], [6, 14, 14], [7, 14, 14],
+    ],
+    axe: [
+      [1, 6, 10], [2, 4, 11], [3, 4, 11], [4, 4, 8], [5, 5, 7],
+    ],
+    shovel: [
+      [0, 10, 13], [1, 9, 14], [2, 9, 14], [3, 9, 14], [4, 10, 13], [5, 11, 12],
+    ],
+  };
+  function drawTool(tile, type, headCol, headDark) {
+    clearTile(tile);
+    drawHandle(tile, 1, 14, type === 'shovel' ? 8 : 10);
+    for (const [y, xa, xb] of TOOL_HEADS[type]) {
+      for (let x = xa; x <= xb; x++) {
+        px(tile, x, y, (x * 3 + y * 5) % 4 ? headCol : headDark);
+      }
+    }
+    // outline the head bottom for a chunky look
+    for (const [y, xa, xb] of TOOL_HEADS[type]) {
+      px(tile, xa, y, headDark); px(tile, xb, y, headDark);
+    }
+  }
+  drawTool(TILE.ITEM_PICK_WOOD, 'pickaxe', '#b08a52', '#7c5c33');
+  drawTool(TILE.ITEM_PICK_STONE, 'pickaxe', '#9a9a9a', '#5f5f5f');
+  drawTool(TILE.ITEM_AXE_WOOD, 'axe', '#b08a52', '#7c5c33');
+  drawTool(TILE.ITEM_AXE_STONE, 'axe', '#9a9a9a', '#5f5f5f');
+  drawTool(TILE.ITEM_SHOVEL_WOOD, 'shovel', '#b08a52', '#7c5c33');
+  drawTool(TILE.ITEM_SHOVEL_STONE, 'shovel', '#9a9a9a', '#5f5f5f');
 
   // --- sun & moon ---
   fill(TILE.SUN, '#fdf2b0');
