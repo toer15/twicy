@@ -489,6 +489,12 @@ class Game {
     }
   }
 
+  // fire flecks on mobs burning in the morning sun
+  burnFx(m) {
+    if (particlesLevel() <= 0) return;
+    this.particles.burst(Math.floor(m.pos[0]), Math.floor(m.pos[1] + 0.6), Math.floor(m.pos[2]), BL.GLOWSTONE, 4);
+  }
+
   // mob drops are assigned to the killer; sim host routes them
   spawnMobDrop(id, x, y, z, byName) {
     if (!byName || byName === App.profile.name) {
@@ -1171,8 +1177,9 @@ class Game {
       yaw: round2(p.yaw), pitch: round2(p.pitch),
     };
     if (p.sneaking) st.sn = 1;
+    st.hi = this.heldItemId();
     if (this.swingFlag) { st.swing = 1; this.swingFlag = false; }
-    const sig = st.p.join(',') + st.yaw + ',' + st.pitch + (st.swing || 0) + (st.sn || 0);
+    const sig = st.p.join(',') + st.yaw + ',' + st.pitch + (st.swing || 0) + (st.sn || 0) + ',' + st.hi;
     if (sig !== this.lastSent.sig || st.swing) {
       this.lastSent.sig = sig;
       App.net.send(st);
@@ -1350,8 +1357,24 @@ class Game {
     r.drawSky(env.sunAngle, env.starAlpha);
     r.drawChunksSolid(App.settings.renderDist);
 
-    // players & mobs
-    this.remotes.draw(r, App.playerMeshes, getSkinTexture, this.time);
+    // players & mobs (with whatever they're holding in their right hand)
+    const drawHeld = (id, armR) => {
+      if (!thingDef(id) || id === 0) return;
+      let m;
+      if (ITEMS[id]) {
+        // tool sprite lying along the forearm, blade up-forward (like Minecraft)
+        m = M4.mul(armR, M4.translate(0.115, 0.0, 0.115));
+        m = M4.mul(m, M4.rotY(Math.PI / 2));
+        m = M4.mul(m, M4.scale(0.8, 0.8, 0.8));
+        m = M4.mul(m, M4.translate(-0.16, -0.1, -0.03));
+      } else {
+        // block floats in front of the hand
+        m = M4.mul(armR, M4.translate(-0.02, -0.12, -0.3));
+        m = M4.mul(m, M4.scale(0.25, 0.25, 0.25));
+      }
+      r.drawBox(getHeldMesh(id), m, r.atlasTex, { alphaTest: true });
+    };
+    this.remotes.draw(r, App.playerMeshes, getSkinTexture, this.time, drawHeld);
     this.mobs.draw(r, App.playerMeshes, App.mobMeshes, getMobTexture, getSkinTexture, this.time);
     if (this.mobs.arrows.length) this.mobs.drawArrows(r, App.mobMeshes.arrow, getMobTexture('spider'));
     if (this.thirdPerson && !this.player.dead) {
@@ -1363,6 +1386,8 @@ class Game {
         swing: this.swingAnim, time: this.time, sneak: p.sneaking,
       });
       for (const name in parts) r.drawBox(App.playerMeshes[name], parts[name], getSkinTexture(App.profile.skin));
+      const heldId = this.heldItemId();
+      if (heldId) drawHeld(heldId, parts.armR);
     }
 
     // item drops + block particles
@@ -1427,13 +1452,14 @@ class Game {
     const sel = this.inv.getSelected();
 
     if (sel && ITEMS[sel.id]) {
-      // tool/stick: flat sprite held diagonally like Minecraft
-      let m = M4.translate(0.46 + bx - sw2 * 0.26, -0.4 + by + sw1 * 0.06 - sw2 * 0.18, -0.68 - sw1 * 0.06);
-      m = M4.mul(m, M4.rotY(0.05 + sw2 * 0.4));
-      m = M4.mul(m, M4.rotX(-0.05 - sw1 * 0.5));
-      m = M4.mul(m, M4.rotZ(-0.75 - sw2 * 0.55));
-      m = M4.mul(m, M4.scale(0.38, 0.38, 0.38));
-      m = M4.mul(m, M4.translate(-0.5, -0.5, 0));
+      // tool sprite: the art already points up-right; hold it slightly
+      // angled and let the Minecraft swing arc it across the screen
+      let m = M4.translate(0.5 + bx - sw2 * 0.34, -0.52 + by + sw1 * 0.08 - sw2 * 0.22, -0.72 - sw1 * 0.08);
+      m = M4.mul(m, M4.rotY(-0.15 + sw2 * 0.5));
+      m = M4.mul(m, M4.rotZ(-0.1 - sw2 * 0.9));
+      m = M4.mul(m, M4.rotX(-0.1 - sw1 * 0.6));
+      m = M4.mul(m, M4.scale(0.55, 0.55, 0.55));
+      m = M4.mul(m, M4.translate(-0.5, -0.45, 0));
       r.drawBox(getHeldMesh(sel.id), m, r.atlasTex, { alphaTest: true });
     } else if (sel) {
       // held block dips down-left and twists during the swing

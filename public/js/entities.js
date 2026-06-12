@@ -64,10 +64,10 @@ function playerPartMatrices(pose) {
   parts.body = at([0, 12, 0], M4.rotX(lean), [-4, 0, -2]);
   const armLean = sneak ? -0.45 : 0;
   if (pose.zombieArms) {
-    // both arms stretched out forward, swaying slightly
+    // both arms stretched out forward, swaying slightly; jab on attack
     const sway = Math.sin((pose.time || 0) * 2.2) * 0.07 + Math.cos(wp) * 0.12 * amp;
-    parts.armR = at([-6, shoulderY, shoulderZ], M4.rotX(-1.5 - sway), [-2, -10, -2]);
-    parts.armL = at([6, shoulderY, shoulderZ], M4.rotX(-1.5 + sway), [-2, -10, -2]);
+    parts.armR = at([-6, shoulderY, shoulderZ], M4.rotX(-1.5 - sway - punchX * 0.55), [-2, -10, -2]);
+    parts.armL = at([6, shoulderY, shoulderZ], M4.rotX(-1.5 + sway - punchX * 0.55), [-2, -10, -2]);
   } else {
     parts.armR = at([-6, shoulderY, shoulderZ],
       M4.mul(M4.rotY(-punchY), M4.mul(M4.rotX(-armSwing - punchX + armLean), M4.rotZ(idle + 0.05))), [-2, -10, -2]);
@@ -92,7 +92,7 @@ class RemotePlayers {
       pos, target: pos.slice(),
       yaw: st.yaw || 0, pitch: st.pitch || 0,
       targetYaw: st.yaw || 0, targetPitch: st.pitch || 0,
-      bodyYaw: st.yaw || 0, sneak: !!st.sn,
+      bodyYaw: st.yaw || 0, sneak: !!st.sn, heldId: st.hi || 0,
       walkPhase: 0, walkAmp: 0, speed: 0,
       swingT: -1, lastStateAt: 0, tag: null,
     });
@@ -118,6 +118,7 @@ class RemotePlayers {
     if (msg.yaw !== undefined) rp.targetYaw = msg.yaw;
     if (msg.pitch !== undefined) rp.targetPitch = msg.pitch;
     rp.sneak = !!msg.sn;
+    if (typeof msg.hi === 'number') rp.heldId = msg.hi;
     if (msg.swing) rp.swingT = 0;
   }
 
@@ -142,7 +143,7 @@ class RemotePlayers {
     }
   }
 
-  draw(renderer, meshes, getSkinTex, time) {
+  draw(renderer, meshes, getSkinTex, time, drawHeld) {
     for (const rp of this.map.values()) {
       const parts = playerPartMatrices({
         pos: rp.pos, bodyYaw: rp.bodyYaw, headYaw: rp.yaw, pitch: rp.pitch,
@@ -151,6 +152,7 @@ class RemotePlayers {
       });
       const tex = getSkinTex(rp.skin);
       for (const name in parts) renderer.drawBox(meshes[name], parts[name], tex);
+      if (drawHeld && rp.heldId) drawHeld(rp.heldId, parts.armR);
     }
   }
 

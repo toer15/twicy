@@ -6,7 +6,7 @@
 const MOB_KINDS = ['zombie', 'spider', 'creeper', 'pig', 'sheep', 'cow', 'skeleton'];
 
 const MOB_TYPES = {
-  zombie: { hostile: true, night: true, hp: 20, speed: 2.6, dmg: 3, aggroR: 14, atkR: 1.5,
+  zombie: { hostile: true, night: true, burns: true, hp: 20, speed: 2.6, dmg: 3, aggroR: 14, atkR: 1.5,
     w: 0.6, h: 1.9, model: 'humanoid', drops: [{ id: 109 /*leather*/, ch: 0.35, n: 1 }] },
   spider: { hostile: 'night', hp: 16, speed: 3.0, dmg: 2, aggroR: 12, atkR: 1.6,
     w: 1.1, h: 0.9, model: 'spider', drops: [] },
@@ -15,7 +15,7 @@ const MOB_TYPES = {
   pig: { hp: 10, speed: 1.7, w: 0.9, h: 0.9, model: 'quad', drops: [] },
   sheep: { hp: 8, speed: 1.6, w: 0.9, h: 1.1, model: 'quad', drops: [{ id: BL.WOOL_WHITE, ch: 1, n: 1 }] },
   cow: { hp: 10, speed: 1.5, w: 0.95, h: 1.3, model: 'quad', drops: [{ id: 109, ch: 1, n: 2 }] },
-  skeleton: { hostile: true, night: true, hp: 16, speed: 2.4, dmg: 0, aggroR: 15, atkR: 0,
+  skeleton: { hostile: true, night: true, burns: true, hp: 16, speed: 2.4, dmg: 0, aggroR: 15, atkR: 0,
     ranged: { range: 12, keep: 7, cooldown: 2.2, dmg: 3 },
     w: 0.6, h: 1.9, model: 'humanoid', skin: 'skeleton', drops: [{ id: 100 /*stick*/, ch: 0.6, n: 2 }] },
 };
@@ -188,7 +188,10 @@ class Mobs {
       target: [x, y, z], targetYaw: 0,
       hp: t.hp, walkPhase: Math.random() * 6, walkAmp: 0, headPitch: 0,
       wanderT: 0, wanderDir: null, atkCd: 0, hurtT: 0, deathT: 0, fuseT: 0,
-      fleeT: 0, age: 0, onGround: false, lastSeen: 0,
+      fleeT: 0, age: 0, onGround: false,
+      losT: 0, canSee: false, aggroT: 0, lastSeenPos: null,
+      strafeT: 0, strafeDir: 1, grazeT: 0, grazing: 0, headPitch: 0,
+      swingT: -1, burnT: 0, burning: false,
     };
     this.list.set(m.id, m);
     return m;
@@ -233,6 +236,10 @@ class Mobs {
         m.deathT += dt;
         if (m.deathT > 1.1) this.list.delete(m.id);
         continue;
+      }
+      if (m.swingT >= 0) {
+        m.swingT += dt;
+        if (m.swingT > 0.3) m.swingT = -1;
       }
       if (this.isSim) this._ai(m, dt, dayLight);
       else this._interp(m, dt);
@@ -325,6 +332,7 @@ class Mobs {
       m.hp = hp;
       if ((flags & 2) && m.fuseT === 0) { m.fuseT = 0.01; Sfx.fuse(); }
       if (!(flags & 2)) m.fuseT = 0;
+      m.burning = !!(flags & 8);
       if ((flags & 4) && m.deathT === 0) this._startDeath(m, false);
     }
     for (const [id, m] of this.list) {
@@ -339,6 +347,7 @@ class Mobs {
       if (m.hurtT > 0) flags |= 1;
       if (m.fuseT > 0) flags |= 2;
       if (m.deathT > 0) flags |= 4;
+      if (m.burning) flags |= 8;
       out.push([m.id, MOB_KINDS.indexOf(m.type),
         Math.round(m.pos[0] * 50) / 50, Math.round(m.pos[1] * 50) / 50, Math.round(m.pos[2] * 50) / 50,
         Math.round(m.yaw * 100) / 100, m.hp, flags]);
@@ -351,6 +360,19 @@ class Mobs {
   }
 
   // ---------- AI (sim host only) ----------
+
+  // can the mob see this player? (cached, checked a few times per second)
+  _los(m, p, t) {
+    const o = [m.pos[0], m.pos[1] + t.h * 0.85, m.pos[2]];
+    const dx = p.pos[0] - o[0], dy = (p.pos[1] + 1.5) - o[1], dz = p.pos[2] - o[2];
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 0.5) return true;
+    const w = this.game.world;
+    const hit = raycastVoxels(o, [dx / len, dy / len, dz / len], len,
+      (x, y, z) => w.solidAt(x, y, z));
+    return !hit;
+  }
+
   _ai(m, dt, dayLight) {
     const t = MOB_TYPES[m.type];
     const w = this.game.world;
@@ -365,32 +387,83 @@ class Mobs {
     }
     if (!nearest || (nd > 60 && m.age > 20)) { this.list.delete(m.id); return; }
 
-    const isHostile = t.hostile === true || (t.hostile === 'night' && dayLight < 0.5);
+    // undead burn in direct sunlight (like Minecraft at dawn)
+    m.burning = false;
+    if (t.burns && dayLight > 0.62) {
+      const exposed = w.findGroundY(m.pos[0], m.pos[2]) <= Math.floor(m.pos[1] + 0.2);
+      if (exposed) {
+        m.burning = true;
+        m.burnT += dt;
+        if (m.burnT >= 0.8) {
+          m.burnT = 0;
+          m.hp -= 2;
+          m.hurtT = 0.3;
+          if (this.game.burnFx) this.game.burnFx(m);
+          if (m.hp <= 0) { this._startDeath(m, true); return; }
+        }
+      }
+    }
+
+    // vision: cheap cached line-of-sight at 4 Hz + aggro memory
+    m.losT -= dt;
+    if (m.losT <= 0) {
+      m.losT = 0.25;
+      m.canSee = nd < t.aggroR * 1.6 && this._los(m, nearest, t);
+      if (m.canSee && nd < t.aggroR) {
+        m.aggroT = 6; // remember the target for a while
+        m.lastSeenPos = nearest.pos.slice();
+      }
+    }
+    if (m.aggroT > 0) m.aggroT -= dt;
+
+    const isHostileNow = t.hostile === true || (t.hostile === 'night' && dayLight < 0.5);
+    const hunting = isHostileNow && m.aggroT > 0 && Math.abs(nearest.pos[1] - m.pos[1]) < 10;
     let moveDir = null, moveSpeed = t.speed;
+    m.climbing = false;
 
     if (m.fleeT > 0) {
+      // panicked zig-zag run away
       m.fleeT -= dt;
       const dx = m.pos[0] - nearest.pos[0], dz = m.pos[2] - nearest.pos[2];
       const dl = Math.hypot(dx, dz) || 1;
-      moveDir = [dx / dl, dz / dl];
+      const zig = Math.sin(m.age * 6) * 0.5;
+      moveDir = [dx / dl - dz / dl * zig, dz / dl + dx / dl * zig];
       moveSpeed = t.speed * 1.5;
-    } else if (isHostile && nd < t.aggroR && Math.abs(nearest.pos[1] - m.pos[1]) < 8) {
-      // chase the nearest player
-      const dx = nearest.pos[0] - m.pos[0], dz = nearest.pos[2] - m.pos[2];
+      m.grazing = 0;
+    } else if (hunting) {
+      m.grazing = 0;
+      // chase what we can see; otherwise search the last known position
+      const tgt = m.canSee ? nearest.pos : (m.lastSeenPos || nearest.pos);
+      const dx = tgt[0] - m.pos[0], dz = tgt[2] - m.pos[2];
       const dl = Math.hypot(dx, dz) || 1;
-      m.headPitch = clamp(Math.atan2(nearest.pos[1] - m.pos[1], dl) * 0.6, -0.5, 0.5);
+      if (!m.canSee && dl < 1.6) m.aggroT = 0; // searched the spot, gave up
+      m.headPitch = clamp(Math.atan2(nearest.pos[1] - m.pos[1], nd || 1) * 0.6, -0.5, 0.5);
+      m.climbing = m.type === 'spider';
+
       if (t.ranged) {
-        // skeleton: keep distance and shoot
+        // skeleton: keep distance, strafe side to side, shoot on sight
         m.atkCd -= dt;
-        if (nd < t.ranged.keep - 1.5) moveDir = [-dx / dl, -dz / dl];      // back away
-        else if (nd > t.ranged.range) moveDir = [dx / dl, dz / dl];        // close in
-        if (nd <= t.ranged.range && m.atkCd <= 0) {
+        m.strafeT -= dt;
+        if (m.strafeT <= 0) { m.strafeT = 1 + Math.random() * 2; m.strafeDir = Math.random() < 0.5 ? -1 : 1; }
+        if (!m.canSee) {
+          moveDir = [dx / dl, dz / dl]; // move to regain sight
+        } else if (nd < t.ranged.keep - 1.5) {
+          moveDir = [-dx / dl, -dz / dl];
+        } else if (nd > t.ranged.range) {
+          moveDir = [dx / dl, dz / dl];
+        } else {
+          // in the firing band: strafe
+          moveDir = [-dz / dl * m.strafeDir, dx / dl * m.strafeDir];
+          moveSpeed = t.speed * 0.6;
+        }
+        if (m.canSee && nd <= t.ranged.range && m.atkCd <= 0) {
           m.atkCd = t.ranged.cooldown;
+          m.swingT = 0;
           this._shoot(m, nearest, t.ranged);
         }
       } else if (t.fuse) {
-        // creeper: get close then start the fuse
-        if (nd < t.atkR) {
+        // creeper: close in silently, then hold still and hiss
+        if (m.canSee && nd < t.atkR) {
           if (m.fuseT === 0) Sfx.fuse();
           m.fuseT += dt;
           if (m.fuseT > 1.5) { this._explode(m); return; }
@@ -399,30 +472,60 @@ class Mobs {
           moveDir = [dx / dl, dz / dl];
         }
       } else {
-        if (nd > t.atkR * 0.8) moveDir = [dx / dl, dz / dl];
+        if (dl > t.atkR * 0.8 || !m.canSee) moveDir = [dx / dl, dz / dl];
         m.atkCd -= dt;
         const vDist = Math.abs(nearest.pos[1] + 0.9 - (m.pos[1] + t.h * 0.5));
-        if (nd < t.atkR && vDist < 2.2 && m.atkCd <= 0) {
+        if (m.canSee && nd < t.atkR && vDist < 2.2 && m.atkCd <= 0) {
           m.atkCd = 1.1;
+          m.swingT = 0;
+          if (m.onGround) m.vel[1] = 3.2; // little lunge hop
           this._attackPlayer(m, nearest, t.dmg);
         }
       }
     } else {
       m.fuseT = 0;
-      m.headPitch = lerp(m.headPitch || 0, 0, dt * 4);
-      // wander
+      // wander / graze
       m.wanderT -= dt;
       if (m.wanderT <= 0) {
         if (m.wanderDir || Math.random() < 0.5) {
           m.wanderDir = null;
           m.wanderT = 1.5 + Math.random() * 4;
+          // passive mobs sometimes graze while paused
+          if (!t.hostile && Math.random() < 0.5) m.grazeT = 1.2 + Math.random() * 1.5;
         } else {
           const a = Math.random() * Math.PI * 2;
           m.wanderDir = [Math.cos(a), Math.sin(a)];
           m.wanderT = 1 + Math.random() * 2.5;
+          m.grazeT = 0;
         }
       }
-      if (m.wanderDir) { moveDir = m.wanderDir; moveSpeed = t.speed * 0.45; }
+      if (m.grazeT > 0) m.grazeT -= dt;
+      m.grazing = !t.hostile && m.grazeT > 0 ? 1 : 0;
+      m.headPitch = lerp(m.headPitch || 0, m.grazing ? 0.55 : 0, Math.min(1, dt * 5));
+      if (m.wanderDir) {
+        // don't wander into water
+        const ax = Math.floor(m.pos[0] + m.wanderDir[0] * 1.2);
+        const az = Math.floor(m.pos[2] + m.wanderDir[1] * 1.2);
+        if (w.getBlock(ax, Math.floor(m.pos[1]), az) === BL.WATER ||
+            w.getBlock(ax, Math.floor(m.pos[1] - 1), az) === BL.WATER) {
+          m.wanderDir = [-m.wanderDir[0], -m.wanderDir[1]];
+        }
+        moveDir = m.wanderDir;
+        moveSpeed = t.speed * 0.45;
+      }
+    }
+
+    // separation: don't stand inside each other
+    let sepX = 0, sepZ = 0;
+    for (const o of this.list.values()) {
+      if (o === m || o.deathT > 0) continue;
+      const dx = m.pos[0] - o.pos[0], dz = m.pos[2] - o.pos[2];
+      const d2 = dx * dx + dz * dz;
+      if (d2 > 0.001 && d2 < 1.1) {
+        const d = Math.sqrt(d2);
+        sepX += dx / d * (1.05 - d);
+        sepZ += dz / d * (1.05 - d);
+      }
     }
 
     // movement + physics
@@ -435,12 +538,17 @@ class Mobs {
       m.vel[0] *= Math.max(0, 1 - dt * 8);
       m.vel[2] *= Math.max(0, 1 - dt * 8);
     }
+    m.vel[0] += sepX * dt * 14;
+    m.vel[2] += sepZ * dt * 14;
     m.yaw = lerpAngle(m.yaw, m.targetYaw, Math.min(1, dt * 8));
     m.vel[1] -= 28 * dt;
     if (m.vel[1] < -40) m.vel[1] = -40;
     this._move(m, t, dt);
-    // hop up single blocks when pushing against a wall
-    if (m.onGround && m.blocked && moveDir) m.vel[1] = 7.8;
+    // climb (spiders) or hop up single blocks when pushing against a wall
+    if (m.blocked && moveDir) {
+      if (m.climbing) m.vel[1] = 4.4;
+      else if (m.onGround) m.vel[1] = 7.8;
+    }
 
     // swimming: float up
     const feet = w.getBlock(Math.floor(m.pos[0]), Math.floor(m.pos[1] + 0.3), Math.floor(m.pos[2]));
@@ -527,6 +635,20 @@ class Mobs {
     m.vel[0] += kx; m.vel[2] += kz; m.vel[1] = Math.max(m.vel[1], 4.5);
     const t = MOB_TYPES[m.type];
     if (!t.hostile) m.fleeT = 4;
+    else {
+      // getting hit wakes the mob up — and its friends nearby
+      m.aggroT = 8;
+      m.lastSeenPos = m.pos.slice();
+      for (const o of this.list.values()) {
+        if (o === m || o.deathT > 0) continue;
+        const ot = MOB_TYPES[o.type];
+        if (!ot.hostile || ot.fuse) continue;
+        if (dist2d(o.pos[0], o.pos[2], m.pos[0], m.pos[2]) < 12) {
+          o.aggroT = Math.max(o.aggroT, 6);
+          o.lastSeenPos = m.pos.slice();
+        }
+      }
+    }
     if (t.fuse) m.fuseT = 0; // knocking a creeper back resets its fuse
     if (m.hp <= 0) this._startDeath(m, true);
   }
@@ -575,8 +697,9 @@ class Mobs {
     for (const m of this.list.values()) {
       const t = MOB_TYPES[m.type];
       const dying = m.deathT > 0;
+      const burnFlicker = m.burning ? (Math.sin(time * 22 + m.id) * 0.5 + 0.5) * 0.45 : 0;
       const tint = [
-        m.hurtT > 0 || (dying && m.deathT < 0.3) ? 0.55 : 0,
+        Math.max(m.hurtT > 0 || (dying && m.deathT < 0.3) ? 0.55 : 0, burnFlicker),
         m.fuseT > 0 ? (Math.sin(m.fuseT * 18) > 0 ? 0.6 : 0) : 0,
         0,
         dying ? Math.max(0, 1 - (m.deathT - 0.5) / 0.6) : 1,
@@ -584,8 +707,9 @@ class Mobs {
       if (t.model === 'humanoid') {
         const parts = playerPartMatrices({
           pos: m.pos, bodyYaw: m.yaw, headYaw: m.yaw, pitch: -(m.headPitch || 0),
-          walkPhase: m.walkPhase, walkAmp: m.walkAmp, swing: -1, time,
-          zombieArms: true, deathT: m.deathT,
+          walkPhase: m.walkPhase, walkAmp: m.walkAmp,
+          swing: m.swingT >= 0 ? m.swingT / 0.3 : -1, time,
+          zombieArms: true, deathT: m.deathT, // undead hold their arms out
         });
         const tex = getSkinTex(t.skin || 'zombie');
         for (const name in parts) renderer.drawBox(playerMeshes[name], parts[name], tex, { tint });

@@ -418,8 +418,9 @@ const handlers = {
     if (typeof m.yaw === 'number') st.yaw = m.yaw;
     if (typeof m.pitch === 'number') st.pitch = m.pitch;
     if (m.sn) st.sn = 1;
+    if (typeof m.hi === 'number') st.hi = m.hi | 0;
     if (m.swing) st.swing = 1;
-    sess.lastState = { p: st.p, yaw: st.yaw, pitch: st.pitch, sn: st.sn };
+    sess.lastState = { p: st.p, yaw: st.yaw, pitch: st.pitch, sn: st.sn, hi: st.hi };
     broadcast(w, st, sess.id);
   },
 

@@ -30,6 +30,7 @@ class Player {
     this.regenT = 0;
     this.bobPhase = 0;
     this.bobAmp = 0;
+    this.hurtAnim = 0;
     this.walkDist = 0;       // for footstep sounds
     this.time = 0;
     this.onDamage = null;    // cb(amount)
@@ -77,6 +78,7 @@ class Player {
   // input: {f,b,l,r:0/1, jump, down, sprint, sneak}
   tick(dt, input) {
     this.time += dt;
+    if (this.hurtAnim > 0) this.hurtAnim = Math.max(0, this.hurtAnim - dt);
     if (this.dead) return;
     const w = this.world;
     // never simulate while standing in an ungenerated chunk
@@ -237,6 +239,7 @@ class Player {
     if (this.mode === 'creative' || this.dead || n <= 0) return;
     this.health -= n;
     this.lastDamage = this.time;
+    this.hurtAnim = 0.35; // Minecraft-style camera tilt
     if (!silent) Sfx.hurt();
     if (this.onDamage) this.onDamage(n);
     if (this.health <= 0) {
@@ -254,6 +257,8 @@ class Player {
       ox = Math.cos(this.bobPhase) * 0.025 * this.bobAmp;
       roll = Math.sin(this.bobPhase) * 0.006 * this.bobAmp;
     }
+    // hurt: sharp roll tilt that eases back (like Minecraft's damage wobble)
+    if (this.hurtAnim > 0) roll += Math.sin((this.hurtAnim / 0.35) * Math.PI) * 0.05;
     // bob sideways offset along the right vector
     const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
     return {

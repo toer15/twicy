@@ -263,66 +263,133 @@ function buildAtlas() {
     ctx.fillRect(tx + 11, ty + 7, 1, 5);
   }
 
-  // --- item sprites: stick + tools (transparent background) ---
-  const HANDLE = '#8a6244', HANDLE_D = '#6e4f33';
-  // 2px-thick 45° handle running up-right; (x0,y0) = bottom-left start
-  function drawHandle(tile, x0, y0, len) {
-    for (let i = 0; i < len; i++) {
-      px(tile, x0 + i, y0 - i, HANDLE);
-      px(tile, x0 + i + 1, y0 - i, HANDLE_D);
-    }
-  }
-  clearTile(TILE.ITEM_STICK);
-  drawHandle(TILE.ITEM_STICK, 3, 12, 9);
-
-  // solid Minecraft-style heads, drawn from explicit row spans [y, x0, x1]
-  const TOOL_HEADS = {
-    pickaxe: [
-      [1, 5, 10], [2, 3, 5], [2, 10, 12], [3, 2, 3], [3, 12, 13],
-      [4, 2, 2], [4, 13, 14], [5, 1, 2], [5, 13, 14], [6, 14, 14], [7, 14, 14],
-    ],
-    axe: [
-      [1, 6, 10], [2, 4, 11], [3, 4, 11], [4, 4, 8], [5, 5, 7],
-    ],
-    shovel: [
-      [0, 10, 13], [1, 9, 14], [2, 9, 14], [3, 9, 14], [4, 10, 13], [5, 11, 12],
-    ],
-  };
-  function drawTool(tile, type, headCol, headDark) {
+  // --- item sprites: Minecraft-style pixel art from shape maps ---
+  // chars: L highlight, B body, D dark edge, G guard/binding, h handle core,
+  // H handle edge, . transparent
+  function drawShape(tile, rows, pal) {
     clearTile(tile);
-    drawHandle(tile, 1, 14, type === 'shovel' ? 8 : 10);
-    for (const [y, xa, xb] of TOOL_HEADS[type]) {
-      for (let x = xa; x <= xb; x++) {
-        px(tile, x, y, (x * 3 + y * 5) % 4 ? headCol : headDark);
+    for (let y = 0; y < rows.length; y++) {
+      for (let x = 0; x < rows[y].length; x++) {
+        const ch = rows[y][x];
+        if (ch !== '.' && pal[ch]) px(tile, x, y, pal[ch]);
       }
     }
-    // outline the head bottom for a chunky look
-    for (const [y, xa, xb] of TOOL_HEADS[type]) {
-      px(tile, xa, y, headDark); px(tile, xb, y, headDark);
-    }
   }
-  drawTool(TILE.ITEM_PICK_WOOD, 'pickaxe', '#b08a52', '#7c5c33');
-  drawTool(TILE.ITEM_PICK_STONE, 'pickaxe', '#9a9a9a', '#5f5f5f');
-  drawTool(TILE.ITEM_AXE_WOOD, 'axe', '#b08a52', '#7c5c33');
-  drawTool(TILE.ITEM_AXE_STONE, 'axe', '#9a9a9a', '#5f5f5f');
-  drawTool(TILE.ITEM_SHOVEL_WOOD, 'shovel', '#b08a52', '#7c5c33');
-  drawTool(TILE.ITEM_SHOVEL_STONE, 'shovel', '#9a9a9a', '#5f5f5f');
+  const HANDLE_PAL = { h: '#9a7748', H: '#5e4426', G: '#4a3a22' };
+  const MAT = {
+    wood:    { L: '#c9a96d', B: '#9f844d', D: '#6e552e' },
+    stone:   { L: '#c8c8c8', B: '#969696', D: '#5f5f5f' },
+    iron:    { L: '#ffffff', B: '#d8d8d8', D: '#8e8e8e' },
+    diamond: { L: '#b1f8ee', B: '#4aedd9', D: '#23a193' },
+  };
+  const pal = m => ({ ...HANDLE_PAL, ...MAT[m] });
 
-  // swords: short diagonal handle + long blade with a crossguard
-  function drawSword(tile, bladeCol, bladeDark) {
-    clearTile(tile);
-    drawHandle(tile, 1, 14, 4); // grip
-    px(tile, 3, 10, '#4a3a22'); px(tile, 5, 12, '#4a3a22'); // guard
-    px(tile, 4, 10, '#4a3a22'); px(tile, 5, 11, '#4a3a22');
-    for (let i = 0; i < 9; i++) {
-      px(tile, 5 + i, 10 - i, bladeCol);
-      px(tile, 6 + i, 10 - i, bladeDark);
-      if (i < 8) px(tile, 6 + i, 9 - i, bladeCol);
-    }
-    px(tile, 14, 1, bladeCol);
-  }
-  drawSword(TILE.ITEM_SWORD_WOOD, '#b08a52', '#7c5c33');
-  drawSword(TILE.ITEM_SWORD_STONE, '#b9b9b9', '#7a7a7a');
+  const STICK_SHAPE = [
+    '................',
+    '................',
+    '............HH..',
+    '...........HhH..',
+    '..........HhH...',
+    '.........HhH....',
+    '........HhH.....',
+    '.......HhH......',
+    '......HhH.......',
+    '.....HhH........',
+    '....HhH.........',
+    '...HhH..........',
+    '..HhH...........',
+    '..HH............',
+    '................',
+    '................',
+  ];
+  const SWORD_SHAPE = [
+    '.............LBD',
+    '............LBD.',
+    '...........LBD..',
+    '..........LBD...',
+    '.........LBD....',
+    '........LBD.....',
+    '.......LBD......',
+    '......LBD.......',
+    '..G..LBD........',
+    '..GGLBD.........',
+    '...GGBD.........',
+    '..HhGG..........',
+    '.HhH.GG.........',
+    '.HH.............',
+    'HH..............',
+    '................',
+  ];
+  const PICK_SHAPE = [
+    '......LLLLL.....',
+    '....LLBBBBBLL...',
+    '...LBBD...DBBL..',
+    '..LBD......DBBL.',
+    '..BD....G...DBB.',
+    '.LBD...GhH...DB.',
+    '.BD...GhH....DBD',
+    '.BD..HhH......BD',
+    '.B..HhH.......BD',
+    '....HhH.........',
+    '...HhH..........',
+    '..HhH...........',
+    '.HhH............',
+    '.HH.............',
+    '................',
+    '................',
+  ];
+  const AXE_SHAPE = [
+    '...LLLLL........',
+    '..LBBBBBL.......',
+    '..LBBBBBBLL.....',
+    '..BBD..GhBB.....',
+    '..BBD.GhHB......',
+    '...DDGhH.D......',
+    '....GhH.........',
+    '...GhH..........',
+    '..HhH...........',
+    '..HhH...........',
+    '.HhH............',
+    '.HhH............',
+    'HhH.............',
+    'HH..............',
+    '................',
+    '................',
+  ];
+  const SHOVEL_SHAPE = [
+    '...........LLL..',
+    '..........LBBBL.',
+    '.........LBBBBB.',
+    '........LBBBBBD.',
+    '........GBBBBD..',
+    '.......GhHDBD...',
+    '......GhH.D.....',
+    '.....HhH........',
+    '....HhH.........',
+    '...HhH..........',
+    '..HhH...........',
+    '.HhH............',
+    '.HH.............',
+    '................',
+    '................',
+    '................',
+  ];
+
+  drawShape(TILE.ITEM_STICK, STICK_SHAPE, pal('wood'));
+  drawShape(TILE.ITEM_SWORD_WOOD, SWORD_SHAPE, pal('wood'));
+  drawShape(TILE.ITEM_SWORD_STONE, SWORD_SHAPE, pal('stone'));
+  drawShape(TILE.ITEM_SWORD_IRON, SWORD_SHAPE, pal('iron'));
+  drawShape(TILE.ITEM_SWORD_DIAMOND, SWORD_SHAPE, pal('diamond'));
+  drawShape(TILE.ITEM_PICK_WOOD, PICK_SHAPE, pal('wood'));
+  drawShape(TILE.ITEM_PICK_STONE, PICK_SHAPE, pal('stone'));
+  drawShape(TILE.ITEM_PICK_IRON, PICK_SHAPE, pal('iron'));
+  drawShape(TILE.ITEM_PICK_DIAMOND, PICK_SHAPE, pal('diamond'));
+  drawShape(TILE.ITEM_AXE_WOOD, AXE_SHAPE, pal('wood'));
+  drawShape(TILE.ITEM_AXE_STONE, AXE_SHAPE, pal('stone'));
+  drawShape(TILE.ITEM_AXE_IRON, AXE_SHAPE, pal('iron'));
+  drawShape(TILE.ITEM_SHOVEL_WOOD, SHOVEL_SHAPE, pal('wood'));
+  drawShape(TILE.ITEM_SHOVEL_STONE, SHOVEL_SHAPE, pal('stone'));
+  drawShape(TILE.ITEM_SHOVEL_IRON, SHOVEL_SHAPE, pal('iron'));
 
   // leather: floppy tan hide
   clearTile(TILE.ITEM_LEATHER);
@@ -397,13 +464,7 @@ function buildAtlas() {
     for (const [y, xa, xb] of rows) { px(t, xa, y, '#2da89e'); px(t, xb, y, '#2da89e'); }
   }
 
-  // --- iron & diamond tools, iron armor ---
-  drawTool(TILE.ITEM_PICK_IRON, 'pickaxe', '#d8d8d8', '#9a9a9a');
-  drawTool(TILE.ITEM_AXE_IRON, 'axe', '#d8d8d8', '#9a9a9a');
-  drawTool(TILE.ITEM_SHOVEL_IRON, 'shovel', '#d8d8d8', '#9a9a9a');
-  drawSword(TILE.ITEM_SWORD_IRON, '#e8e8e8', '#a8a8a8');
-  drawTool(TILE.ITEM_PICK_DIAMOND, 'pickaxe', '#62e6dc', '#2da89e');
-  drawSword(TILE.ITEM_SWORD_DIAMOND, '#7deee5', '#3dc4ba');
+  // --- iron armor ---
   const IR = '#d8d8d8', IRD = '#9a9a9a', IRL = '#f0f0f0';
   function armorIron(t, rows) {
     clearTile(t);

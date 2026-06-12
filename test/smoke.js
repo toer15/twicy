@@ -290,6 +290,7 @@ run(`
   const dr = new Drops();
   const gy4 = w.findGroundY(6, 6);
   dr.spawn(BL.LOG, 6.5, gy4 + 3, 6.5);
+  dr.list[0].vx = 0; dr.list[0].vz = 0; // fall straight: neighbor columns differ in height
   let picked = null;
   // far away: must just fall and land, not be collected
   for (let i = 0; i < 240; i++) dr.tick(1 / 60, w, [50, 50, 50], id => { picked = id; return true; });
@@ -421,8 +422,38 @@ assert.ok(mob.drops.length >= 1, 'cow dropped leather: ' + JSON.stringify(mob.dr
 assert.ok(mob.reload, 'mob serialize/load roundtrip');
 console.log(`✓ mobs: chase (${mob.d0.toFixed(0)}m → ${mob.d1.toFixed(0)}m), attack (${mob.hurt} dmg), death drops`);
 
+// ---- AI: line of sight + sunburn ----
+run(`
+  // wall between mob and player -> no aggro, no attacks
+  for (let y = 21; y <= 27; y++) for (let z = -16; z < 32; z++) aw.setBlock(6, y, z, BL.STONE, false);
+  let hurtW = 0;
+  const fgWall = {
+    world: aw, player: { dead: false, pos: [2.5, 21, 2.5] },
+    remotes: { map: new Map() }, netSend() {},
+    hurtPlayer(d) { hurtW += d; }, applyExplosion() {}, spawnMobDrop() {},
+  };
+  const mobsW = new Mobs(fgWall);
+  mobsW.setSim(true);
+  const zw = mobsW.spawn('zombie', 12.5, 21, 2.5);
+  for (let i = 0; i < 400; i++) mobsW.tick(1 / 60, 0.1);
+  globalThis._los = { sees: zw.canSee, aggro: zw.aggroT > 0, hurt: hurtW };
+  // sunburn: zombie in full daylight takes damage and dies
+  const zb2 = mobsW.spawn('zombie', 12.5, 21, 12.5);
+  const hp0 = zb2.hp;
+  for (let i = 0; i < 300; i++) mobsW.tick(1 / 60, 1.0);
+  globalThis._burn = { hp0, hp1: zb2.hp, burning: zb2.burning || zb2.deathT > 0 || !mobsW.list.has(zb2.id) };
+`);
+const los = JSON.parse(run('JSON.stringify(_los)'));
+assert.strictEqual(los.sees, false, 'zombie cannot see through the wall');
+assert.strictEqual(los.hurt, 0, 'no attacks without line of sight');
+const burn = JSON.parse(run('JSON.stringify(_burn)'));
+assert.ok(burn.hp1 < burn.hp0, `zombie burns in sunlight: ${burn.hp0} -> ${burn.hp1}`);
+console.log(`✓ AI: wall blocks sight (no aggro), sunlight burns undead (${burn.hp0}→${burn.hp1} hp in 5s)`);
+
 // ---- skeleton: kites and shoots arrows ----
 run(`
+  // clear the LOS-test wall first
+  for (let y = 21; y <= 27; y++) for (let z = -16; z < 32; z++) aw.setBlock(6, y, z, BL.AIR, false);
   let hurtR = 0;
   const fakeGame2 = {
     world: aw,
