@@ -31,15 +31,24 @@ WebSocket implementation.
   day/night cycle with sun, moon, stars and drifting clouds, third-person view (F5)
 - **Main menu** — world list with create/delete, Survival/Creative selection,
   seed input, skin & profile editor, controls help
-- **Save / load worlds** — server persists every world (terrain edits, time of
-  day, and per-player position/inventory/health/gamemode) to `worlds/*.json`;
-  leave and rejoin exactly where you stopped
+- **Save / load worlds** — the server persists every world (terrain edits, time
+  of day, and per-player position/inventory/health/gamemode) to `worlds/*.json`;
+  in offline mode the same data is saved to your browser's localStorage —
+  either way you rejoin exactly where you stopped
 
 | | | |
 |---|---|---|
 | ![Menu](docs/menu.png) | ![Third person](docs/thirdperson.png) | ![Inventory](docs/inventory.png) |
 
-## Quick start
+## Play it
+
+**▶ Play in your browser (no install): https://toer15.github.io/twicy/**
+
+That static version runs in *offline mode*: full singleplayer with worlds
+saved in your browser (localStorage). Deployed automatically by the GitHub
+Pages workflow in `.github/workflows/pages.yml`.
+
+### Run the full version (with multiplayer)
 
 Requires Node.js ≥ 18. No `npm install` needed.
 
@@ -47,7 +56,10 @@ Requires Node.js ≥ 18. No `npm install` needed.
 npm start          # or: node server/server.js
 ```
 
-Open **http://localhost:3000**, create a world, play.
+Then open **http://localhost:3000**, create a world, play. The game
+automatically detects whether a server is reachable — with one it uses
+server-side worlds and multiplayer; without one it falls back to offline
+mode (you can even open `public/index.html` straight from disk).
 
 ### Multiplayer
 

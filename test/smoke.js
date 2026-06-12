@@ -8,10 +8,26 @@ const vm = require('vm');
 const assert = require('assert');
 
 const PUB = path.join(__dirname, '..', 'public', 'js');
-const ctx = vm.createContext({ console, Math, JSON, Date, performance: { now: () => Date.now() } });
+
+// minimal browser-ish globals so localserver.js runs headless
+const fakeStorage = {
+  map: new Map(),
+  setItem(k, v) { this.map.set(k, String(v)); },
+  getItem(k) { return this.map.has(k) ? this.map.get(k) : null; },
+  removeItem(k) { this.map.delete(k); },
+  key(i) { return [...this.map.keys()][i]; },
+  get length() { return this.map.size; },
+};
+const ctx = vm.createContext({
+  console, Math, JSON, Date,
+  performance: { now: () => Date.now() },
+  setTimeout, clearTimeout, setInterval, clearInterval,
+  localStorage: fakeStorage,
+  window: { addEventListener() {}, removeEventListener() {} },
+});
 
 // only logic files — no DOM/WebGL needed for these
-for (const f of ['config.js', 'math.js', 'noise.js', 'textures.js', 'blocks.js', 'worldgen.js', 'world.js', 'mesher.js', 'inventory.js', 'sound.js', 'player.js', 'entities.js']) {
+for (const f of ['config.js', 'math.js', 'noise.js', 'textures.js', 'blocks.js', 'worldgen.js', 'world.js', 'mesher.js', 'inventory.js', 'sound.js', 'player.js', 'entities.js', 'localserver.js']) {
   const src = fs.readFileSync(path.join(PUB, f), 'utf8');
   vm.runInContext(src, ctx, { filename: f });
 }
@@ -178,4 +194,60 @@ assert.strictEqual(run('_blocks'), true, 'block registry ids consistent');
 assert.ok(run('_creative') > 20, 'creative palette has items');
 console.log('✓ block registry consistent,', run('_creative'), 'creative items');
 
-console.log('\nAll smoke tests passed.');
+// ---- offline LocalServer: full protocol round-trip ----
+(async () => {
+  run(`
+    globalThis._msgs = [];
+    globalThis.ls = new LocalServer(m => _msgs.push(m));
+    ls.handle({ t: 'hello', name: 'Solo', skin: 'royal' });
+    ls.handle({ t: 'create', name: 'Offline World', seed: 'off1', mode: 'creative' });
+  `);
+  const flush = () => new Promise(r => setTimeout(r, 20));
+  const msgs = () => JSON.parse(run('JSON.stringify(_msgs.splice(0))'));
+
+  await flush();
+  let got = msgs();
+  assert.strictEqual(got[0].t, 'hello');
+  assert.strictEqual(got[0].name, 'Solo');
+  const created = got.find(m => m.t === 'created');
+  assert.ok(created && created.id, 'world created locally');
+
+  run(`ls.handle({ t: 'worlds' }); ls.handle({ t: 'join', id: '${created.id}' });`);
+  await flush();
+  got = msgs();
+  const list = got.find(m => m.t === 'worlds');
+  assert.strictEqual(list.list.length, 1, 'local world listed');
+  assert.strictEqual(list.list[0].mode, 'creative');
+  const world = got.find(m => m.t === 'world');
+  assert.strictEqual(world.seed, 'off1', 'join returns world data');
+
+  run(`
+    ls.handle({ t: 'set', x: 7, y: 33, z: -2, id: 9 });
+    ls.handle({ t: 'pdata', pos: [7, 35, -2], yaw: 1, pitch: 0, inv: [[9, 3], 0], health: 20, gamemode: 'creative' });
+    ls.handle({ t: 'chat', text: '/time night' });
+    ls.handle({ t: 'leave' });
+  `);
+  await flush();
+  got = msgs();
+  assert.ok(got.find(m => m.t === 'time' && m.time > 300), '/time works offline');
+
+  // saved to (fake) localStorage; a fresh LocalServer must see everything
+  run(`
+    globalThis._msgs2 = [];
+    globalThis.ls2 = new LocalServer(m => _msgs2.push(m));
+    ls2.handle({ t: 'hello', name: 'Solo', skin: 'royal' });
+    ls2.handle({ t: 'join', id: '${created.id}' });
+  `);
+  await flush();
+  const got2 = JSON.parse(run('JSON.stringify(_msgs2)'));
+  const rejoin = got2.find(m => m.t === 'world');
+  assert.ok(rejoin, 'rejoin works after leave');
+  assert.strictEqual(rejoin.edits['7,33,-2'], 9, 'block edit persisted in browser storage');
+  assert.ok(rejoin.time > 300, 'time persisted');
+  assert.deepStrictEqual(rejoin.you.inv[0], [9, 3], 'inventory persisted');
+  assert.strictEqual(rejoin.you.gamemode, 'creative', 'gamemode persisted');
+  run('ls.close(); ls2.close();'); // stop world-clock intervals so Node can exit
+  console.log('✓ offline mode: create/join/edit/save/rejoin via localStorage');
+
+  console.log('\nAll smoke tests passed.');
+})().catch(e => { console.error('✗ FAILED:', e.message); process.exit(1); });

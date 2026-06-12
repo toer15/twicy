@@ -95,8 +95,11 @@ class Menu {
         <h2>Connect to a server</h2>
         <div class="panel narrow">
           <p>Enter the address of another ${GAME_NAME} server.<br>
-          To host for friends: they open <b>http://&lt;your-ip&gt;:${location.port || 80}</b> in a browser,
-          or connect here with your address.</p>
+          To host for friends: run <b>npm start</b> on one computer — everyone else opens
+          <b>http://&lt;that-ip&gt;:3000</b> in a browser.</p>
+          ${location.protocol === 'https:'
+            ? '<p class="offline-note">⚠ This page is served over https, so browsers will only allow secure (wss://) servers from here. For LAN play, open your host\'s http:// address directly instead.</p>'
+            : ''}
           <input id="m-addr" class="input" placeholder="host:port (e.g. 192.168.1.10:3000)" value="">
           <div class="row">
             <button class="btn" id="m-back">Back</button>
@@ -121,6 +124,8 @@ class Menu {
       <div class="menu-screen">
         <h2>Select World ${this.address ? `<small>@ ${escapeHTML(this.address)}</small>` : ''}</h2>
         <div class="panel worlds-panel">
+          <div id="m-offline" class="offline-note hidden">📁 Offline mode — worlds are saved in this browser.
+            For LAN multiplayer, run the server: <b>npm start</b></div>
           <div id="m-worldlist" class="world-list"><div class="muted">Connecting…</div></div>
           <h3>Create New World</h3>
           <div class="row">
@@ -160,10 +165,12 @@ class Menu {
     };
 
     const listEl = s.querySelector('#m-worldlist');
+    const offlineEl = s.querySelector('#m-offline');
     const refresh = async () => {
       try {
         const worlds = await this.cb.listWorlds(this.address);
         if (!listEl.isConnected) return;
+        offlineEl.classList.toggle('hidden', !(this.cb.isOffline && this.cb.isOffline()));
         this._renderWorldList(listEl, worlds);
       } catch (e) {
         if (listEl.isConnected) listEl.innerHTML = `<div class="muted">⚠ ${escapeHTML(e.message)}</div>`;

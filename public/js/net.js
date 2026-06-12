@@ -4,13 +4,20 @@
 class Net {
   constructor() {
     this.ws = null;
+    this.local = null; // offline mode: in-browser LocalServer bridge
     this.handlers = new Map();
     this.connected = false;
   }
 
   on(type, fn) { this.handlers.set(type, fn); }
 
-  connect(address) {
+  connect(address, timeoutMs = 6000) {
+    // address '@local' = offline single-player backed by localStorage
+    if (address === '@local') {
+      this.local = new LocalServer(msg => this._emit(msg.t, msg));
+      this.connected = true;
+      return Promise.resolve();
+    }
     // address like "host:port" or full ws url; empty = same origin
     let url;
     if (!address) {
@@ -24,7 +31,7 @@ class Net {
     return new Promise((resolve, reject) => {
       try {
         const ws = new WebSocket(url);
-        const timer = setTimeout(() => { try { ws.close(); } catch (e) {} reject(new Error('Connection timed out')); }, 6000);
+        const timer = setTimeout(() => { try { ws.close(); } catch (e) {} reject(new Error('Connection timed out')); }, timeoutMs);
         ws.onopen = () => {
           clearTimeout(timer);
           this.ws = ws;
@@ -36,10 +43,12 @@ class Net {
           if (!this.connected) reject(new Error('Could not connect to server'));
         };
         ws.onclose = () => {
-          const was = this.connected;
+          // ignore sockets that never became (or stopped being) the active one,
+          // e.g. a failed same-origin probe closing after we fell back to local
+          if (this.ws !== ws) return;
           this.connected = false;
           this.ws = null;
-          if (was) this._emit('disconnect', {});
+          this._emit('disconnect', {});
         };
         ws.onmessage = ev => {
           let msg;
@@ -58,11 +67,13 @@ class Net {
   }
 
   send(obj) {
+    if (this.local) { this.local.handle(obj); return; }
     if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(obj));
   }
 
   close() {
     this.connected = false;
+    if (this.local) { this.local.close(); this.local = null; }
     if (this.ws) { try { this.ws.close(); } catch (e) {} this.ws = null; }
   }
 }

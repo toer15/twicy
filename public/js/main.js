@@ -32,9 +32,31 @@ function saveJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); 
 async function ensureConnected(address) {
   const addr = address || '';
   if (App.net.connected && App.netAddress === addr) return;
+  // '' means "this game's own server" — when there is none (static hosting,
+  // GitHub Pages, file://), fall back to offline mode transparently
+  if (addr === '' && App.net.connected && App.netAddress === '@local') return;
   App.net.close();
+  if (addr === '') {
+    const httpPage = location.protocol === 'http:' || location.protocol === 'https:';
+    if (httpPage) {
+      try {
+        await App.net.connect('', 3500);
+        App.netAddress = '';
+        await sayHello();
+        return;
+      } catch (e) { App.net.close(); }
+    }
+    await App.net.connect('@local');
+    App.netAddress = '@local';
+    await sayHello();
+    return;
+  }
   await App.net.connect(addr);
   App.netAddress = addr;
+  await sayHello();
+}
+
+async function sayHello() {
   App.net.send({ t: 'hello', name: App.profile.name, skin: App.profile.skin, v: GAME_VERSION });
   await waitFor('hello', 5000);
 }
@@ -100,8 +122,11 @@ window.addEventListener('DOMContentLoaded', () => {
   setupNetHandlers();
   HUD.init();
   Sfx.enabled = App.settings.sound;
+  // make the auto-generated name stable so per-player world data survives reloads
+  saveJSON('twicy.profile', App.profile);
 
   App.menu = new Menu({
+    isOffline: () => App.netAddress === '@local',
     getProfile: () => App.profile,
     setProfile: p => {
       App.profile = p;
